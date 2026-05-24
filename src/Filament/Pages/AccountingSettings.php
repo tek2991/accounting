@@ -1,0 +1,225 @@
+<?php
+
+namespace Tek2991\Accounting\Filament\Pages;
+
+use Filament\Actions\Action;
+use Filament\Forms\Concerns\InteractsWithForms;
+use Filament\Forms\Contracts\HasForms;
+use Filament\Schemas\Schema;
+use Filament\Schemas\Components\Section;
+use Filament\Forms;
+use Filament\Notifications\Notification;
+use Filament\Pages\Page;
+use Tek2991\Accounting\Contracts\CompanyAccessor;
+use Tek2991\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
+use Tek2991\Accounting\Models\Setting;
+
+class AccountingSettings extends Page implements HasForms
+{
+    use InteractsWithForms;
+
+    protected static \BackedEnum|string|null $navigationIcon = null;
+
+    protected static \UnitEnum|string|null $navigationGroup = 'Accounting';
+
+    protected static ?int $navigationSort = 4;
+
+    protected static ?string $navigationLabel = 'Settings';
+
+    protected string $view = 'accounting::filament.pages.accounting-settings';
+
+    public ?array $data = [];
+
+    public function mount(): void
+    {
+        $companyId = app(CompanyAccessor::class)->getCurrentCompanyId();
+
+        $setting = Setting::firstOrCreate(
+            ['company_id' => $companyId],
+            [
+                'default_currency'  => config('accounting.default_currency', 'USD'),
+                'fiscal_year_start' => config('accounting.fiscal_year_start', 1),
+                'company_name'      => null,
+                'company_email'     => null,
+                'company_address'   => null,
+                'company_phone'     => null,
+                'company_tax_id'    => null,
+                'invoice_prefix'    => 'INV-',
+                'bill_prefix'       => 'BILL-',
+                'payment_prefix'    => 'PAY-',
+                'journal_prefix'    => 'JRNL-',
+            ]
+        );
+
+        $this->form->fill($setting->toArray());
+    }
+
+    public function form(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                Section::make('General Settings')
+                    ->description('Manage your accounting preferences.')
+                    ->columns(2)
+                    ->schema([
+                        Forms\Components\Select::make('default_currency')
+                            ->label('Default Currency')
+                            ->options($this->getCurrencyOptions())
+                            ->searchable()
+                            ->required(),
+
+                        Forms\Components\Select::make('fiscal_year_start')
+                            ->label('Fiscal Year Start Month')
+                            ->options([
+                                1  => 'January',
+                                2  => 'February',
+                                3  => 'March',
+                                4  => 'April',
+                                5  => 'May',
+                                6  => 'June',
+                                7  => 'July',
+                                8  => 'August',
+                                9  => 'September',
+                                10 => 'October',
+                                11 => 'November',
+                                12 => 'December',
+                            ])
+                            ->required(),
+                    ]),
+                Section::make('Company Profile')
+                    ->description('Your company details for invoices and bills.')
+                    ->columns(2)
+                    ->schema([
+                        Forms\Components\TextInput::make('company_name')
+                            ->label('Company Name')
+                            ->maxLength(255),
+                        Forms\Components\TextInput::make('company_email')
+                            ->label('Email Address')
+                            ->email()
+                            ->maxLength(255),
+                        Forms\Components\TextInput::make('company_phone')
+                            ->label('Phone Number')
+                            ->maxLength(255),
+                        Forms\Components\TextInput::make('company_tax_id')
+                            ->label('Tax ID / GSTIN')
+                            ->maxLength(255),
+                        Forms\Components\Textarea::make('company_address')
+                            ->label('Address')
+                            ->columnSpanFull(),
+                    ]),
+                    
+                Section::make('Document Numbering')
+                    ->description('Set prefixes for automatically generated document numbers.')
+                    ->columns(2)
+                    ->schema([
+                        Forms\Components\TextInput::make('invoice_prefix')
+                            ->label('Invoice Prefix')
+                            ->required()
+                            ->default('INV-'),
+                        Forms\Components\TextInput::make('bill_prefix')
+                            ->label('Bill Prefix')
+                            ->required()
+                            ->default('BILL-'),
+                        Forms\Components\TextInput::make('payment_prefix')
+                            ->label('Payment Prefix')
+                            ->required()
+                            ->default('PAY-'),
+                        Forms\Components\TextInput::make('journal_prefix')
+                            ->label('Journal Entry Prefix')
+                            ->required()
+                            ->default('JRNL-'),
+                    ]),
+            ])
+            ->statePath('data');
+    }
+
+    public function save(): void
+    {
+        $data      = $this->form->getState();
+        $companyId = app(CompanyAccessor::class)->getCurrentCompanyId();
+
+        Setting::updateOrCreate(
+            ['company_id' => $companyId],
+            [
+                'default_currency'  => $data['default_currency'],
+                'fiscal_year_start' => $data['fiscal_year_start'],
+                'company_name'      => $data['company_name'] ?? null,
+                'company_email'     => $data['company_email'] ?? null,
+                'company_phone'     => $data['company_phone'] ?? null,
+                'company_tax_id'    => $data['company_tax_id'] ?? null,
+                'company_address'   => $data['company_address'] ?? null,
+                'invoice_prefix'    => $data['invoice_prefix'],
+                'bill_prefix'       => $data['bill_prefix'],
+                'payment_prefix'    => $data['payment_prefix'],
+                'journal_prefix'    => $data['journal_prefix'],
+            ]
+        );
+
+        Notification::make()
+            ->success()
+            ->title('Settings Saved')
+            ->send();
+    }
+
+    protected function getHeaderActions(): array
+    {
+        return [
+            Action::make('seedChartOfAccounts')
+                ->label('Seed Default Chart of Accounts')
+                ->icon('heroicon-o-table-cells')
+                ->color('gray')
+                ->requiresConfirmation()
+                ->modalHeading('Seed Default Chart of Accounts')
+                ->modalDescription('This will create the standard chart of accounts and subtypes for this company. Existing accounts will not be overwritten.')
+                ->modalSubmitActionLabel('Seed Accounts')
+                ->action(function () {
+                    $companyId    = app(CompanyAccessor::class)->getCurrentCompanyId();
+                    $currencyCode = $this->form->getState()['default_currency'] ?? config('accounting.default_currency', 'USD');
+
+                    if (! $companyId) {
+                        Notification::make()
+                            ->danger()
+                            ->title('No company context')
+                            ->body('Cannot seed accounts without a company context.')
+                            ->send();
+
+                        return;
+                    }
+
+                    (new DefaultChartOfAccountsSeeder())->run($companyId, $currencyCode);
+
+                    Notification::make()
+                        ->success()
+                        ->title('Chart of Accounts Seeded')
+                        ->body('Default accounts and subtypes have been created.')
+                        ->send();
+                }),
+        ];
+    }
+
+    protected function getCurrencyOptions(): array
+    {
+        try {
+            $names      = \Symfony\Component\Intl\Currencies::getNames();
+            $formatted  = [];
+            foreach ($names as $code => $name) {
+                $formatted[$code] = "{$name} ({$code})";
+            }
+
+            return $formatted;
+        } catch (\Throwable) {
+            return [
+                'USD' => 'US Dollar (USD)',
+                'EUR' => 'Euro (EUR)',
+                'GBP' => 'British Pound (GBP)',
+                'INR' => 'Indian Rupee (INR)',
+                'AUD' => 'Australian Dollar (AUD)',
+                'CAD' => 'Canadian Dollar (CAD)',
+                'JPY' => 'Japanese Yen (JPY)',
+                'CNY' => 'Chinese Yuan (CNY)',
+                'SGD' => 'Singapore Dollar (SGD)',
+                'CHF' => 'Swiss Franc (CHF)',
+            ];
+        }
+    }
+}

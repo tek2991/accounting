@@ -1,0 +1,76 @@
+<?php
+
+namespace Tek2991\Accounting\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Casts\Attribute;
+use Tek2991\Accounting\Concerns\CompanyOwned;
+use Tek2991\Accounting\Enums\ContactType;
+use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\Activitylog\LogOptions;
+
+class Contact extends Model
+{
+    use CompanyOwned;
+    use SoftDeletes;
+    use LogsActivity;
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logFillable()
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs()
+            ->useLogName('catalog')
+            ->setDescriptionForEvent(fn(string $eventName) => "This contact has been {$eventName}");
+    }
+
+    protected $fillable = [
+        'company_id',
+        'type',
+        'name',
+        'email',
+        'phone',
+        'tax_id',
+        'billing_address',
+        'shipping_address',
+        'receivable_balance',
+        'payable_balance',
+    ];
+
+    protected $casts = [
+        'type' => ContactType::class,
+    ];
+
+    public function getTable(): string
+    {
+        return config('accounting.table_prefix', 'acc_') . 'contacts';
+    }
+
+    protected function receivableBalance(): Attribute
+    {
+        return Attribute::make(
+            get: fn ($value) => $value !== null ? $value / 100 : 0,
+            set: fn ($value) => (int) round($value * 100),
+        );
+    }
+
+    protected function payableBalance(): Attribute
+    {
+        return Attribute::make(
+            get: fn ($value) => $value !== null ? $value / 100 : 0,
+            set: fn ($value) => (int) round($value * 100),
+        );
+    }
+
+    public function isCustomer(): bool
+    {
+        return in_array($this->type, [ContactType::Customer, ContactType::Both]);
+    }
+
+    public function isVendor(): bool
+    {
+        return in_array($this->type, [ContactType::Vendor, ContactType::Both]);
+    }
+}

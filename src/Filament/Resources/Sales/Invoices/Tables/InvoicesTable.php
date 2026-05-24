@@ -1,0 +1,80 @@
+<?php
+
+namespace Tek2991\Accounting\Filament\Resources\Sales\Invoices\Tables;
+
+use Filament\Tables;
+use Filament\Tables\Table;
+use Filament\Actions;
+use Tek2991\Accounting\Enums\InvoiceStatus;
+use Tek2991\Accounting\Models\Invoice;
+
+class InvoicesTable
+{
+    public static function configure(Table $table): Table
+    {
+        return $table
+            ->columns([
+                Tables\Columns\TextColumn::make('invoice_number')
+                    ->searchable()
+                    ->sortable(),
+                    
+                Tables\Columns\TextColumn::make('contact.name')
+                    ->searchable()
+                    ->sortable(),
+                    
+                Tables\Columns\TextColumn::make('issue_date')
+                    ->date()
+                    ->sortable(),
+                    
+                Tables\Columns\TextColumn::make('due_date')
+                    ->date()
+                    ->sortable(),
+                    
+                Tables\Columns\TextColumn::make('status')
+                    ->badge()
+                    ->getStateUsing(fn (Invoice $record) => $record->display_status)
+                    ->color(fn (string $state) => match ($state) {
+                        'draft' => 'gray',
+                        'sent' => 'info',
+                        'partially_paid' => 'warning',
+                        'paid' => 'success',
+                        'overdue' => 'danger',
+                        'cancelled' => 'danger',
+                        default => 'gray',
+                    }),
+                    
+                Tables\Columns\TextColumn::make('grand_total')
+                    ->money(config('accounting.default_currency', 'USD'))
+                    ->sortable(),
+                    
+                Tables\Columns\TextColumn::make('balance_due')
+                    ->money(config('accounting.default_currency', 'USD'))
+                    ->sortable()
+                    ->color(fn ($state) => $state > 0 ? 'danger' : null),
+            ])
+            ->filters([
+                Tables\Filters\SelectFilter::make('status')
+                    ->options(InvoiceStatus::class),
+                Tables\Filters\Filter::make('overdue')
+                    ->query(fn ($query) => $query->where('balance_due', '>', 0)->where('due_date', '<', now())),
+            ])
+            ->recordActions([
+                Actions\ViewAction::make(),
+                Actions\EditAction::make()
+                    ->visible(fn (Invoice $record) => $record->status === InvoiceStatus::Draft),
+                Actions\Action::make('post')
+                    ->label('Post')
+                    ->icon('heroicon-o-paper-airplane')
+                    ->requiresConfirmation()
+                    ->visible(fn (Invoice $record) => $record->status === InvoiceStatus::Draft)
+                    ->action(function (Invoice $record) {
+                        app(\Tek2991\Accounting\Services\InvoiceService::class)->post($record);
+                        // Using Filament Notification to inform user
+                        \Filament\Notifications\Notification::make()->title('Invoice posted successfully')->success()->send();
+                    }),
+            ])
+            ->groupedBulkActions([
+                Actions\DeleteBulkAction::make(),
+            ]);
+    }
+}
