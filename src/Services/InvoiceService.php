@@ -48,15 +48,32 @@ class InvoiceService
             } elseif ($item->discount_type === DiscountType::Fixed) {
                 $itemDiscount = $item->getRawOriginal('discount_amount');
             }
-            $itemLineTotal = $baseLineTotal - $itemDiscount;
+            $discountedLineTotal = $baseLineTotal - $itemDiscount;
             
-            $item->line_total = $itemLineTotal / 100; // Accessor handles minor units
-            $item->tax_amount = $item->getRawOriginal('tax_amount') / 100; // Assuming tax_amount was set during item creation
+            // Calculate Tax
+            $itemTaxAmount = 0;
+            $isInclusive = false;
+            
+            if ($item->tax_id) {
+                $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
+                if ($tax) {
+                    $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
+                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($discountedLineTotal, $tax);
+                    $itemTaxAmount = $taxComponents->sum('amount');
+                    $item->tax_snapshot = $taxComponents->toArray();
+                }
+            }
+            
+            // Determine item's pre-tax line total
+            $itemPreTaxTotal = $isInclusive ? ($discountedLineTotal - $itemTaxAmount) : $discountedLineTotal;
+            
+            $item->line_total = $itemPreTaxTotal / 100; // Accessor handles minor units
+            $item->tax_amount = $itemTaxAmount / 100;
             
             $item->save();
 
-            $subtotal += $itemLineTotal;
-            $taxTotal += $item->getRawOriginal('tax_amount');
+            $subtotal += $itemPreTaxTotal;
+            $taxTotal += $itemTaxAmount;
         }
 
         $invoice->subtotal = $subtotal / 100;
@@ -92,9 +109,14 @@ class InvoiceService
             $this->postingGuard->assertInvoicePostable($invoice);
 
             // 1. Create Journal Entries
-            $receivableAccountId = $invoice->contact->receivable_account_id;
+            $receivableAccountId = $invoice->contact->receivable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $invoice->company_id)
+                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Asset)
+                ->where('default', true)
+                ->where('name', 'Accounts Receivable')
+                ->value('id');
+
             if (!$receivableAccountId) {
-                throw new Exception("Contact must have a receivable account to post invoice.");
+                throw new \Exception("Cannot post invoice: No receivable account found for customer and no default Accounts Receivable exists.");
             }
 
             $entries = [];
@@ -102,8 +124,8 @@ class InvoiceService
             // DR: Receivable Account
             $entries[] = [
                 'account_id' => $receivableAccountId,
-                'debit' => $invoice->getRawOriginal('grand_total'),
-                'credit' => 0,
+                'type' => 'debit',
+                'amount' => $invoice->getRawOriginal('grand_total'),
                 'description' => "Invoice {$invoice->invoice_number}",
             ];
 
@@ -138,8 +160,8 @@ class InvoiceService
                 if ($amount > 0) {
                     $entries[] = [
                         'account_id' => $accId,
-                        'debit' => 0,
-                        'credit' => $amount,
+                        'type' => 'credit',
+                        'amount' => $amount,
                         'description' => "Invoice {$invoice->invoice_number} Revenue",
                     ];
                 }
@@ -149,20 +171,22 @@ class InvoiceService
                 if ($amount > 0) {
                     $entries[] = [
                         'account_id' => $accId,
-                        'debit' => 0,
-                        'credit' => $amount,
+                        'type' => 'credit',
+                        'amount' => $amount,
                         'description' => "Invoice {$invoice->invoice_number} Tax",
                     ];
                 }
             }
 
-            $transaction = $this->txnService->createTransaction(
-                $invoice->company_id,
-                $invoice->issue_date,
-                "Posted Invoice {$invoice->invoice_number}",
-                "Invoice",
-                $entries
-            );
+            $transaction = $this->txnService->createTransaction([
+                'company_id' => $invoice->company_id,
+                'posted_at' => $invoice->issue_date,
+                'description' => "Posted Invoice {$invoice->invoice_number}",
+                'type' => \Tek2991\Accounting\Enums\TransactionType::InvoicePosting,
+                'reference' => $invoice->invoice_number,
+                'reviewed' => false,
+                'pending' => false,
+            ], $entries);
 
             $invoice->transaction_id = $transaction->id;
             $invoice->status = InvoiceStatus::Sent;
@@ -187,30 +211,42 @@ class InvoiceService
             
             $paymentAmount = $paymentData['amount'];
 
+            $receivableAccountId = $invoice->contact->receivable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $invoice->company_id)
+                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Asset)
+                ->where('default', true)
+                ->where('name', 'Accounts Receivable')
+                ->value('id');
+
+            if (!$receivableAccountId) {
+                throw new \Exception("Cannot record payment: No receivable account found for customer and no default Accounts Receivable exists.");
+            }
+
             // DR: Payment Bank Account
             // CR: Receivable Account
             $entries = [
                 [
                     'account_id' => $paymentData['payment_account_id'],
-                    'debit' => $paymentAmount,
-                    'credit' => 0,
+                    'type' => 'debit',
+                    'amount' => $paymentAmount,
                     'description' => "Payment for Invoice {$invoice->invoice_number}",
                 ],
                 [
-                    'account_id' => $invoice->contact->receivable_account_id,
-                    'debit' => 0,
-                    'credit' => $paymentAmount,
+                    'account_id' => $receivableAccountId,
+                    'type' => 'credit',
+                    'amount' => $paymentAmount,
                     'description' => "Payment for Invoice {$invoice->invoice_number}",
                 ],
             ];
 
-            $transaction = $this->txnService->createTransaction(
-                $invoice->company_id,
-                $paymentData['payment_date'],
-                "Payment against Invoice {$invoice->invoice_number}",
-                "Payment",
-                $entries
-            );
+            $transaction = $this->txnService->createTransaction([
+                'company_id' => $invoice->company_id,
+                'posted_at' => $paymentData['payment_date'],
+                'description' => "Payment against Invoice {$invoice->invoice_number}",
+                'type' => \Tek2991\Accounting\Enums\TransactionType::PaymentIn,
+                'reference' => "PAY-{$invoice->invoice_number}",
+                'reviewed' => false,
+                'pending' => false,
+            ], $entries);
 
             $payment = new Payment($paymentData);
             $payment->company_id = $invoice->company_id;

@@ -47,15 +47,32 @@ class BillService
             } elseif ($item->discount_type === DiscountType::Fixed) {
                 $itemDiscount = $item->getRawOriginal('discount_amount');
             }
-            $itemLineTotal = $baseLineTotal - $itemDiscount;
+            $discountedLineTotal = $baseLineTotal - $itemDiscount;
             
-            $item->line_total = $itemLineTotal / 100;
-            $item->tax_amount = $item->getRawOriginal('tax_amount') / 100; 
+            // Calculate Tax
+            $itemTaxAmount = 0;
+            $isInclusive = false;
+            
+            if ($item->tax_id) {
+                $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
+                if ($tax) {
+                    $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
+                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($discountedLineTotal, $tax);
+                    $itemTaxAmount = $taxComponents->sum('amount');
+                    $item->tax_snapshot = $taxComponents->toArray();
+                }
+            }
+            
+            // Determine item's pre-tax line total
+            $itemPreTaxTotal = $isInclusive ? ($discountedLineTotal - $itemTaxAmount) : $discountedLineTotal;
+            
+            $item->line_total = $itemPreTaxTotal / 100;
+            $item->tax_amount = $itemTaxAmount / 100; 
             
             $item->save();
 
-            $subtotal += $itemLineTotal;
-            $taxTotal += $item->getRawOriginal('tax_amount');
+            $subtotal += $itemPreTaxTotal;
+            $taxTotal += $itemTaxAmount;
         }
 
         $bill->subtotal = $subtotal / 100;
@@ -90,7 +107,12 @@ class BillService
             
             $this->postingGuard->assertBillPostable($bill);
 
-            $payableAccountId = $bill->contact->payable_account_id;
+            $payableAccountId = $bill->contact->payable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $bill->company_id)
+                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Liability)
+                ->where('default', true)
+                ->where('name', 'Accounts Payable')
+                ->value('id');
+                
             if (!$payableAccountId) {
                 throw new Exception("Contact must have a payable account to post bill.");
             }
@@ -100,8 +122,8 @@ class BillService
             // CR: Payable Account
             $entries[] = [
                 'account_id' => $payableAccountId,
-                'debit' => 0,
-                'credit' => $bill->getRawOriginal('grand_total'),
+                'type' => 'credit',
+                'amount' => $bill->getRawOriginal('grand_total'),
                 'description' => "Bill {$bill->bill_number}",
             ];
 
@@ -136,8 +158,8 @@ class BillService
                 if ($amount > 0) {
                     $entries[] = [
                         'account_id' => $accId,
-                        'debit' => $amount,
-                        'credit' => 0,
+                        'type' => 'debit',
+                        'amount' => $amount,
                         'description' => "Bill {$bill->bill_number} Expense",
                     ];
                 }
@@ -147,20 +169,22 @@ class BillService
                 if ($amount > 0) {
                     $entries[] = [
                         'account_id' => $accId,
-                        'debit' => $amount,
-                        'credit' => 0,
+                        'type' => 'debit',
+                        'amount' => $amount,
                         'description' => "Bill {$bill->bill_number} Tax",
                     ];
                 }
             }
 
-            $transaction = $this->txnService->createTransaction(
-                $bill->company_id,
-                $bill->issue_date,
-                "Posted Bill {$bill->bill_number}",
-                "Bill", // Technically should be BillPosting if we had it, but string for now
-                $entries
-            );
+            $transaction = $this->txnService->createTransaction([
+                'company_id' => $bill->company_id,
+                'posted_at' => $bill->issue_date,
+                'description' => "Posted Bill {$bill->bill_number}",
+                'type' => \Tek2991\Accounting\Enums\TransactionType::BillPosting,
+                'reference' => $bill->bill_number,
+                'reviewed' => false,
+                'pending' => false,
+            ], $entries);
 
             $bill->transaction_id = $transaction->id;
             $bill->status = BillStatus::Received;
@@ -185,30 +209,42 @@ class BillService
             
             $paymentAmount = $paymentData['amount'];
 
+            $payableAccountId = $bill->contact->payable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $bill->company_id)
+                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Liability)
+                ->where('default', true)
+                ->where('name', 'Accounts Payable')
+                ->value('id');
+
+            if (!$payableAccountId) {
+                throw new \Exception("Cannot record payment: No payable account found for vendor and no default Accounts Payable exists.");
+            }
+
             // CR: Payment Bank Account
             // DR: Payable Account
             $entries = [
                 [
                     'account_id' => $paymentData['payment_account_id'],
-                    'debit' => 0,
-                    'credit' => $paymentAmount,
+                    'type' => 'credit',
+                    'amount' => $paymentAmount,
                     'description' => "Payment for Bill {$bill->bill_number}",
                 ],
                 [
-                    'account_id' => $bill->contact->payable_account_id,
-                    'debit' => $paymentAmount,
-                    'credit' => 0,
+                    'account_id' => $payableAccountId,
+                    'type' => 'debit',
+                    'amount' => $paymentAmount,
                     'description' => "Payment for Bill {$bill->bill_number}",
                 ],
             ];
 
-            $transaction = $this->txnService->createTransaction(
-                $bill->company_id,
-                $paymentData['payment_date'],
-                "Payment against Bill {$bill->bill_number}",
-                "Payment",
-                $entries
-            );
+            $transaction = $this->txnService->createTransaction([
+                'company_id' => $bill->company_id,
+                'posted_at' => $paymentData['payment_date'],
+                'description' => "Payment against Bill {$bill->bill_number}",
+                'type' => \Tek2991\Accounting\Enums\TransactionType::PaymentOut,
+                'reference' => "PAY-{$bill->bill_number}",
+                'reviewed' => false,
+                'pending' => false,
+            ], $entries);
 
             $payment = new Payment($paymentData);
             $payment->company_id = $bill->company_id;

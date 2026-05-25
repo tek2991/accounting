@@ -34,13 +34,32 @@ class CreditNoteService
         $taxTotal = 0;
 
         foreach ($cn->items as $item) {
-            $lineTotal = $item->getRawOriginal('quantity') * $item->getRawOriginal('unit_price');
-            $item->line_total = $lineTotal / 100;
-            $item->tax_amount = $item->getRawOriginal('tax_amount') / 100;
+            $baseLineTotal = $item->getRawOriginal('quantity') * $item->getRawOriginal('unit_price');
+            
+            // Calculate Tax
+            $itemTaxAmount = 0;
+            $isInclusive = false;
+            
+            if ($item->tax_id) {
+                $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
+                if ($tax) {
+                    $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
+                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax);
+                    $itemTaxAmount = $taxComponents->sum('amount');
+                    $item->tax_snapshot = $taxComponents->toArray();
+                }
+            }
+            
+            // Determine item's pre-tax line total
+            $itemPreTaxTotal = $isInclusive ? ($baseLineTotal - $itemTaxAmount) : $baseLineTotal;
+            
+            $item->line_total = $itemPreTaxTotal / 100;
+            $item->tax_amount = $itemTaxAmount / 100;
+            
             $item->save();
 
-            $subtotal += $lineTotal;
-            $taxTotal += $item->getRawOriginal('tax_amount');
+            $subtotal += $itemPreTaxTotal;
+            $taxTotal += $itemTaxAmount;
         }
 
         $cn->subtotal = $subtotal / 100;
@@ -68,9 +87,14 @@ class CreditNoteService
                 throw new Exception("Only draft credit notes can be posted.");
             }
 
-            $receivableAccountId = $cn->contact->receivable_account_id;
+            $receivableAccountId = $cn->contact->receivable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $cn->company_id)
+                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Asset)
+                ->where('default', true)
+                ->where('name', 'Accounts Receivable')
+                ->value('id');
+
             if (!$receivableAccountId) {
-                throw new Exception("Contact must have a receivable account to post credit note.");
+                throw new \Exception("Cannot post credit note: No receivable account found for customer and no default Accounts Receivable exists.");
             }
 
             $entries = [];
@@ -78,8 +102,8 @@ class CreditNoteService
             // CR: Receivable Account
             $entries[] = [
                 'account_id' => $receivableAccountId,
-                'debit' => 0,
-                'credit' => $cn->getRawOriginal('grand_total'),
+                'type' => 'credit',
+                'amount' => $cn->getRawOriginal('grand_total'),
                 'description' => "Credit Note {$cn->credit_note_number}",
             ];
 
@@ -113,8 +137,8 @@ class CreditNoteService
                 if ($amount > 0) {
                     $entries[] = [
                         'account_id' => $accId,
-                        'debit' => $amount,
-                        'credit' => 0,
+                        'type' => 'debit',
+                        'amount' => $amount,
                         'description' => "Credit Note {$cn->credit_note_number} Revenue Reversal",
                     ];
                 }
@@ -124,23 +148,20 @@ class CreditNoteService
                 if ($amount > 0) {
                     $entries[] = [
                         'account_id' => $accId,
-                        'debit' => $amount,
-                        'credit' => 0,
+                        'type' => 'debit',
+                        'amount' => $amount,
                         'description' => "Credit Note {$cn->credit_note_number} Tax Reversal",
                     ];
                 }
             }
 
-            $transaction = $this->txnService->createTransaction(
-                [
-                    'company_id' => $cn->company_id,
-                    'type' => \Tek2991\Accounting\Enums\TransactionType::CreditNote,
-                    'description' => "Posted Credit Note {$cn->credit_note_number}",
-                    'posted_at' => $cn->issue_date?->toDateString() ?? now()->toDateString(),
-                    'reference' => $cn->credit_note_number,
-                ],
-                $entries
-            );
+            $transaction = $this->txnService->createTransaction([
+                'company_id' => $cn->company_id,
+                'type' => \Tek2991\Accounting\Enums\TransactionType::CreditNote,
+                'description' => "Posted Credit Note {$cn->credit_note_number}",
+                'posted_at' => $cn->issue_date?->toDateString() ?? now()->toDateString(),
+                'reference' => $cn->credit_note_number,
+            ], $entries);
 
             $cn->transaction_id = $transaction->id;
             $cn->status = CreditNoteStatus::Issued;

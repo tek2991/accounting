@@ -42,7 +42,7 @@ class ViewInvoice extends ViewRecord
                         ->default(fn ($record) => $record->balance_due),
                     Select::make('payment_account_id')
                         ->label('Payment Account')
-                        ->options(Account::whereIn('category', [AccountCategory::CurrentAsset, AccountCategory::Bank, AccountCategory::Cash])->pluck('name', 'id'))
+                        ->options(Account::where('type', \Tek2991\Accounting\Enums\AccountType::CurrentAsset)->pluck('name', 'id'))
                         ->required(),
                     DatePicker::make('payment_date')
                         ->default(now())

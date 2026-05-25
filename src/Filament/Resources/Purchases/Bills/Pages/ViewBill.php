@@ -28,8 +28,12 @@ class ViewBill extends ViewRecord
                 ->requiresConfirmation()
                 ->visible(fn ($record) => $record->status === BillStatus::Draft)
                 ->action(function ($record) {
-                    app(BillService::class)->post($record);
-                    \Filament\Notifications\Notification::make()->title('Bill posted')->success()->send();
+                    try {
+                        app(BillService::class)->post($record);
+                        \Filament\Notifications\Notification::make()->title('Bill posted')->success()->send();
+                    } catch (\Exception $e) {
+                        \Filament\Notifications\Notification::make()->title('Failed to post bill')->body($e->getMessage())->danger()->send();
+                    }
                 }),
             Actions\Action::make('record_payment')
                 ->label('Record Payment')
@@ -42,7 +46,7 @@ class ViewBill extends ViewRecord
                         ->default(fn ($record) => $record->balance_due),
                     Select::make('payment_account_id')
                         ->label('Payment Account')
-                        ->options(Account::whereIn('category', [AccountCategory::CurrentAsset, AccountCategory::Bank, AccountCategory::Cash])->pluck('name', 'id'))
+                        ->options(Account::where('type', \Tek2991\Accounting\Enums\AccountType::CurrentAsset)->pluck('name', 'id'))
                         ->required(),
                     DatePicker::make('payment_date')
                         ->default(now())
@@ -50,9 +54,13 @@ class ViewBill extends ViewRecord
                     TextInput::make('reference'),
                 ])
                 ->action(function ($record, array $data) {
-                    $data['amount'] = (int) round($data['amount'] * 100); // Minor units
-                    app(BillService::class)->recordPayment($record, $data);
-                    \Filament\Notifications\Notification::make()->title('Payment recorded')->success()->send();
+                    try {
+                        $data['amount'] = (int) round($data['amount'] * 100); // Minor units
+                        app(BillService::class)->recordPayment($record, $data);
+                        \Filament\Notifications\Notification::make()->title('Payment recorded')->success()->send();
+                    } catch (\Exception $e) {
+                        \Filament\Notifications\Notification::make()->title('Payment failed')->body($e->getMessage())->danger()->send();
+                    }
                 }),
             Actions\Action::make('cancel')
                 ->label('Cancel')
@@ -61,8 +69,12 @@ class ViewBill extends ViewRecord
                 ->color('danger')
                 ->visible(fn ($record) => $record->status !== BillStatus::Cancelled && $record->status !== BillStatus::Paid)
                 ->action(function ($record) {
-                    app(BillService::class)->cancel($record);
-                    \Filament\Notifications\Notification::make()->title('Bill cancelled')->success()->send();
+                    try {
+                        app(BillService::class)->cancel($record);
+                        \Filament\Notifications\Notification::make()->title('Bill cancelled')->success()->send();
+                    } catch (\Exception $e) {
+                        \Filament\Notifications\Notification::make()->title('Failed to cancel bill')->body($e->getMessage())->danger()->send();
+                    }
                 }),
         ];
     }

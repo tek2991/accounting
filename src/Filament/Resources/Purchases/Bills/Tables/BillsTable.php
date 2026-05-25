@@ -69,8 +69,12 @@ class BillsTable
                     ->requiresConfirmation()
                     ->visible(fn (Bill $record) => $record->status === BillStatus::Draft)
                     ->action(function (Bill $record) {
-                        app(\Tek2991\Accounting\Services\BillService::class)->post($record);
-                        \Filament\Notifications\Notification::make()->title('Bill posted successfully')->success()->send();
+                        try {
+                            app(\Tek2991\Accounting\Services\BillService::class)->post($record);
+                            \Filament\Notifications\Notification::make()->title('Bill posted successfully')->success()->send();
+                        } catch (\Exception $e) {
+                            \Filament\Notifications\Notification::make()->title('Failed to post bill')->body($e->getMessage())->danger()->send();
+                        }
                     }),
             ])
             ->groupedBulkActions([

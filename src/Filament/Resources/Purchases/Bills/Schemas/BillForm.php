@@ -13,6 +13,84 @@ class BillForm
 {
     public static function configure(Schema $schema): Schema
     {
+        $getTaxType = function ($taxId) {
+            static $cache = [];
+            if (!$taxId) return null;
+            if (!isset($cache[$taxId])) {
+                $cache[$taxId] = \Tek2991\Accounting\Models\Tax::find($taxId)?->type?->value;
+            }
+            return $cache[$taxId];
+        };
+        
+        $calculateTotals = function ($get) use ($getTaxType) {
+            $grossSubtotal = 0;
+            $totalItemDiscounts = 0;
+            $taxableAmount = 0;
+            $taxTotal = 0;
+            $netItemsTotal = 0;
+            
+            foreach ((array) $get('items') as $item) {
+                $qty = (float) ($item['quantity'] ?? 0);
+                $price = (float) ($item['unit_price'] ?? 0);
+                $baseLineTotal = $qty * $price;
+                $grossSubtotal += $baseLineTotal;
+                
+                $itemDiscount = 0;
+                if (($item['discount_type'] ?? 'percentage') === 'percentage') {
+                    $itemDiscount = $baseLineTotal * ((float) ($item['discount_rate'] ?? 0) / 100);
+                } else {
+                    $itemDiscount = (float) ($item['discount_amount'] ?? 0);
+                }
+                $totalItemDiscounts += $itemDiscount;
+                
+                $discountedLineTotal = $baseLineTotal - $itemDiscount;
+                
+                $itemTaxAmount = 0;
+                $isInclusive = false;
+                $hasTax = false;
+                if (!empty($item['tax_id'])) {
+                    $hasTax = true;
+                    $isInclusive = $getTaxType($item['tax_id']) === 'inclusive';
+                    $rateSum = 0;
+                    foreach ($item['tax_snapshot'] ?? [] as $comp) {
+                        $rateSum += (float) ($comp['rate'] ?? 0);
+                    }
+                    if ($isInclusive) {
+                        $itemTaxAmount = $discountedLineTotal * ($rateSum / (100 + $rateSum));
+                    } else {
+                        $itemTaxAmount = $discountedLineTotal * ($rateSum / 100);
+                    }
+                }
+                
+                $itemPreTaxTotal = $isInclusive ? ($discountedLineTotal - $itemTaxAmount) : $discountedLineTotal;
+                
+                if ($hasTax) {
+                    $taxableAmount += $itemPreTaxTotal;
+                }
+                
+                $netItemsTotal += $itemPreTaxTotal;
+                $taxTotal += $itemTaxAmount;
+            }
+            
+            $docDiscount = 0;
+            if (($get('discount_type') ?? 'percentage') === 'percentage') {
+                $docDiscount = $netItemsTotal * ((float) ($get('discount_rate') ?? 0) / 100);
+            } else {
+                $docDiscount = (float) ($get('discount_amount') ?? 0);
+            }
+            
+            $totalDiscount = $totalItemDiscounts + $docDiscount;
+            $grandTotal = $netItemsTotal - $docDiscount + $taxTotal;
+            
+            return [
+                'subtotal' => $grossSubtotal,
+                'total_discount' => $totalDiscount,
+                'taxable_amount' => $taxableAmount,
+                'tax_total' => $taxTotal,
+                'grand_total' => $grandTotal,
+            ];
+        };
+
         return $schema
             ->components([
                 Section::make('Bill Details')
@@ -21,7 +99,7 @@ class BillForm
                     ->components([
                         Forms\Components\Select::make('contact_id')
                             ->label('Vendor')
-                            ->relationship('contact', 'name')
+                            ->relationship('contact', 'name', fn ($query) => $query->whereIn('type', [\Tek2991\Accounting\Enums\ContactType::Vendor, \Tek2991\Accounting\Enums\ContactType::Both]))
                             ->searchable()
                             ->preload()
                             ->required(),
@@ -36,8 +114,20 @@ class BillForm
                         Forms\Components\DatePicker::make('due_date'),
                         
                         Forms\Components\Select::make('currency_code')
-                            ->options(['USD' => 'USD', 'INR' => 'INR'])
-                            ->default('USD')
+                            ->options(function () {
+                                try {
+                                    $names = \Symfony\Component\Intl\Currencies::getNames();
+                                    $formatted = [];
+                                    foreach ($names as $code => $name) {
+                                        $formatted[$code] = "{$code} - {$name}";
+                                    }
+                                    return $formatted;
+                                } catch (\Throwable) {
+                                    return ['USD' => 'USD - US Dollar', 'INR' => 'INR - Indian Rupee', 'EUR' => 'EUR - Euro', 'GBP' => 'GBP - British Pound'];
+                                }
+                            })
+                            ->default(fn () => \Tek2991\Accounting\Facades\Accounting::getCurrency())
+                            ->searchable()
                             ->required(),
                             
                         Forms\Components\Select::make('default_expense_account_id')
@@ -46,6 +136,41 @@ class BillForm
                             ->preload()
                             ->required(),
                             
+                        Forms\Components\Select::make('discount_type')
+                            ->options([
+                                \Tek2991\Accounting\Enums\DiscountType::Percentage->value => 'Percentage',
+                                \Tek2991\Accounting\Enums\DiscountType::Fixed->value => 'Fixed',
+                            ])
+                            ->default(\Tek2991\Accounting\Enums\DiscountType::Percentage->value)
+                            ->reactive(),
+                            
+                        Forms\Components\TextInput::make('discount_rate')
+                            ->label('Discount %')
+                            ->numeric()
+                            ->default(0)
+                            ->reactive()
+                            ->visible(fn ($get) => $get('discount_type') === \Tek2991\Accounting\Enums\DiscountType::Percentage->value)
+                            ->helperText(function ($get) use ($calculateTotals) {
+                                $netItemsTotal = $calculateTotals($get)['subtotal'];
+                                $rate = (float) ($get('discount_rate') ?? 0);
+                                $amount = $netItemsTotal * ($rate / 100);
+                                $currency = $get('currency_code') ?? 'USD';
+                                return "Amount: {$currency} " . number_format($amount, 2);
+                            }),
+                            
+                        Forms\Components\TextInput::make('discount_amount')
+                            ->label('Discount Amount')
+                            ->numeric()
+                            ->default(0)
+                            ->reactive()
+                            ->visible(fn ($get) => $get('discount_type') === \Tek2991\Accounting\Enums\DiscountType::Fixed->value)
+                            ->helperText(function ($get) use ($calculateTotals) {
+                                $netItemsTotal = $calculateTotals($get)['subtotal'];
+                                $amount = (float) ($get('discount_amount') ?? 0);
+                                $pct = $netItemsTotal > 0 ? ($amount / $netItemsTotal) * 100 : 0;
+                                return "Rate: " . number_format($pct, 2) . '%';
+                            }),
+
                         Forms\Components\Textarea::make('notes')
                             ->columnSpanFull(),
                     ]),
@@ -55,16 +180,28 @@ class BillForm
                     ->columns(2)
                     ->components([
                         Forms\Components\Placeholder::make('subtotal')
-                            ->content(fn ($record) => $record ? number_format($record->subtotal, 2) : '0.00'),
-                        Forms\Components\Placeholder::make('discount_amount')
-                            ->content(fn ($record) => $record ? number_format($record->discount_amount, 2) : '0.00'),
+                            ->label('Subtotal')
+                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['subtotal'], 2)),
+                        Forms\Components\Placeholder::make('total_discount')
+                            ->label('Total Discount')
+                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['total_discount'], 2)),
+                        Forms\Components\Placeholder::make('taxable_amount')
+                            ->label('Taxable Amount')
+                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['taxable_amount'], 2)),
                         Forms\Components\Placeholder::make('tax_total')
-                            ->content(fn ($record) => $record ? number_format($record->tax_total, 2) : '0.00'),
+                            ->label('Total Tax')
+                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['tax_total'], 2)),
                         Forms\Components\Placeholder::make('grand_total')
-                            ->content(fn ($record) => $record ? number_format($record->grand_total, 2) : '0.00')
+                            ->label('Grand Total')
+                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['grand_total'], 2))
                             ->extraAttributes(['class' => 'font-bold text-lg']),
                         Forms\Components\Placeholder::make('balance_due')
-                            ->content(fn ($record) => $record ? number_format($record->balance_due, 2) : '0.00')
+                            ->label('Balance Due')
+                            ->content(function ($get, $record) use ($calculateTotals) {
+                                $grandTotal = $calculateTotals($get)['grand_total'];
+                                $paid = $record ? (float) $record->amount_paid : 0;
+                                return ($get('currency_code') ?? 'USD') . ' ' . number_format(max(0, $grandTotal - $paid), 2);
+                            })
                             ->extraAttributes(['class' => 'font-bold text-lg text-danger-600'])
                             ->columnSpanFull(),
                     ]),
@@ -101,11 +238,13 @@ class BillForm
                                     ->numeric()
                                     ->default(1)
                                     ->required()
+                                    ->reactive()
                                     ->columnSpan(1),
                                     
                                 Forms\Components\TextInput::make('unit_price')
                                     ->numeric()
                                     ->required()
+                                    ->reactive()
                                     ->columnSpan(2),
                                     
                                 Forms\Components\Select::make('tax_id')
@@ -132,12 +271,78 @@ class BillForm
                                 Forms\Components\Hidden::make('tax_snapshot'),
                                     
                                 Forms\Components\Placeholder::make('line_total')
-                                    ->content(function ($get) {
-                                        $qty = (float) $get('quantity') ?: 0;
-                                        $price = (float) $get('unit_price') ?: 0;
-                                        return number_format($qty * $price, 2);
+                                    ->content(function ($get) use ($getTaxType) {
+                                        $qty = (float) ($get('quantity') ?? 0);
+                                        $price = (float) ($get('unit_price') ?? 0);
+                                        $baseLineTotal = $qty * $price;
+                                        
+                                        $itemDiscount = 0;
+                                        if (($get('discount_type') ?? 'percentage') === 'percentage') {
+                                            $itemDiscount = $baseLineTotal * ((float) ($get('discount_rate') ?? 0) / 100);
+                                        } else {
+                                            $itemDiscount = (float) ($get('discount_amount') ?? 0);
+                                        }
+                                        
+                                        $discountedLineTotal = $baseLineTotal - $itemDiscount;
+                                        
+                                        $itemTaxAmount = 0;
+                                        $isInclusive = false;
+                                        if (!empty($get('tax_id'))) {
+                                            $isInclusive = $getTaxType($get('tax_id')) === 'inclusive';
+                                            $rateSum = 0;
+                                            foreach ($get('tax_snapshot') ?? [] as $comp) {
+                                                $rateSum += (float) ($comp['rate'] ?? 0);
+                                            }
+                                            if ($isInclusive) {
+                                                $itemTaxAmount = $discountedLineTotal * ($rateSum / (100 + $rateSum));
+                                            }
+                                        }
+                                        
+                                        $itemPreTaxTotal = $isInclusive ? ($discountedLineTotal - $itemTaxAmount) : $discountedLineTotal;
+                                        return number_format($itemPreTaxTotal, 2);
                                     })
                                     ->columnSpan(1),
+                                    
+                                Forms\Components\Select::make('discount_type')
+                                    ->options([
+                                        \Tek2991\Accounting\Enums\DiscountType::Percentage->value => 'Percentage',
+                                        \Tek2991\Accounting\Enums\DiscountType::Fixed->value => 'Fixed',
+                                    ])
+                                    ->default(\Tek2991\Accounting\Enums\DiscountType::Percentage->value)
+                                    ->reactive()
+                                    ->columnSpan(2),
+                                    
+                                Forms\Components\TextInput::make('discount_rate')
+                                    ->label('Discount %')
+                                    ->numeric()
+                                    ->default(0)
+                                    ->reactive()
+                                    ->columnSpan(2)
+                                    ->visible(fn ($get) => $get('discount_type') === \Tek2991\Accounting\Enums\DiscountType::Percentage->value)
+                                    ->helperText(function ($get) {
+                                        $qty = (float) ($get('quantity') ?? 0);
+                                        $price = (float) ($get('unit_price') ?? 0);
+                                        $baseTotal = $qty * $price;
+                                        $amount = $baseTotal * ((float) ($get('discount_rate') ?? 0) / 100);
+                                        return '=' . number_format($amount, 2);
+                                    }),
+                                    
+                                Forms\Components\TextInput::make('discount_amount')
+                                    ->label('Discount Amount')
+                                    ->numeric()
+                                    ->default(0)
+                                    ->reactive()
+                                    ->columnSpan(2)
+                                    ->visible(fn ($get) => $get('discount_type') === \Tek2991\Accounting\Enums\DiscountType::Fixed->value)
+                                    ->helperText(function ($get) {
+                                        $qty = (float) ($get('quantity') ?? 0);
+                                        $price = (float) ($get('unit_price') ?? 0);
+                                        $baseTotal = $qty * $price;
+                                        $amount = (float) ($get('discount_amount') ?? 0);
+                                        $pct = $baseTotal > 0 ? ($amount / $baseTotal) * 100 : 0;
+                                        return '=' . number_format($pct, 2) . '%';
+                                    }),
+
                             ])
                             ->defaultItems(1)
                             ->orderColumn('sort_order')

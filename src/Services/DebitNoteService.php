@@ -34,13 +34,32 @@ class DebitNoteService
         $taxTotal = 0;
 
         foreach ($dn->items as $item) {
-            $lineTotal = $item->getRawOriginal('quantity') * $item->getRawOriginal('unit_price');
-            $item->line_total = $lineTotal / 100;
-            $item->tax_amount = $item->getRawOriginal('tax_amount') / 100;
+            $baseLineTotal = $item->getRawOriginal('quantity') * $item->getRawOriginal('unit_price');
+            
+            // Calculate Tax
+            $itemTaxAmount = 0;
+            $isInclusive = false;
+            
+            if ($item->tax_id) {
+                $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
+                if ($tax) {
+                    $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
+                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax);
+                    $itemTaxAmount = $taxComponents->sum('amount');
+                    $item->tax_snapshot = $taxComponents->toArray();
+                }
+            }
+            
+            // Determine item's pre-tax line total
+            $itemPreTaxTotal = $isInclusive ? ($baseLineTotal - $itemTaxAmount) : $baseLineTotal;
+            
+            $item->line_total = $itemPreTaxTotal / 100;
+            $item->tax_amount = $itemTaxAmount / 100;
+            
             $item->save();
 
-            $subtotal += $lineTotal;
-            $taxTotal += $item->getRawOriginal('tax_amount');
+            $subtotal += $itemPreTaxTotal;
+            $taxTotal += $itemTaxAmount;
         }
 
         $dn->subtotal = $subtotal / 100;
@@ -68,9 +87,14 @@ class DebitNoteService
                 throw new Exception("Only draft debit notes can be posted.");
             }
 
-            $payableAccountId = $dn->contact->payable_account_id;
+            $payableAccountId = $dn->contact->payable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $dn->company_id)
+                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Liability)
+                ->where('default', true)
+                ->where('name', 'Accounts Payable')
+                ->value('id');
+
             if (!$payableAccountId) {
-                throw new Exception("Contact must have a payable account to post debit note.");
+                throw new \Exception("Cannot post debit note: No payable account found for vendor and no default Accounts Payable exists.");
             }
 
             $entries = [];
@@ -78,8 +102,8 @@ class DebitNoteService
             // DR: Payable Account
             $entries[] = [
                 'account_id' => $payableAccountId,
-                'debit' => $dn->getRawOriginal('grand_total'),
-                'credit' => 0,
+                'type' => 'debit',
+                'amount' => $dn->getRawOriginal('grand_total'),
                 'description' => "Debit Note {$dn->debit_note_number}",
             ];
 
@@ -113,8 +137,8 @@ class DebitNoteService
                 if ($amount > 0) {
                     $entries[] = [
                         'account_id' => $accId,
-                        'debit' => 0,
-                        'credit' => $amount,
+                        'type' => 'credit',
+                        'amount' => $amount,
                         'description' => "Debit Note {$dn->debit_note_number} Expense Reversal",
                     ];
                 }
@@ -124,23 +148,20 @@ class DebitNoteService
                 if ($amount > 0) {
                     $entries[] = [
                         'account_id' => $accId,
-                        'debit' => 0,
-                        'credit' => $amount,
+                        'type' => 'credit',
+                        'amount' => $amount,
                         'description' => "Debit Note {$dn->debit_note_number} Tax Reversal",
                     ];
                 }
             }
 
-            $transaction = $this->txnService->createTransaction(
-                [
-                    'company_id' => $dn->company_id,
-                    'type' => \Tek2991\Accounting\Enums\TransactionType::DebitNote,
-                    'description' => "Posted Debit Note {$dn->debit_note_number}",
-                    'posted_at' => $dn->issue_date?->toDateString() ?? now()->toDateString(),
-                    'reference' => $dn->debit_note_number,
-                ],
-                $entries
-            );
+            $transaction = $this->txnService->createTransaction([
+                'company_id' => $dn->company_id,
+                'type' => \Tek2991\Accounting\Enums\TransactionType::DebitNote,
+                'description' => "Posted Debit Note {$dn->debit_note_number}",
+                'posted_at' => $dn->issue_date?->toDateString() ?? now()->toDateString(),
+                'reference' => $dn->debit_note_number,
+            ], $entries);
 
             $dn->transaction_id = $transaction->id;
             $dn->status = DebitNoteStatus::Issued;

@@ -20,6 +20,79 @@ class CreditNoteForm
 {
     public static function make(): array
     {
+        $calculateTotals = function (Get $get) {
+            $subtotal = 0;
+            $taxableAmount = 0;
+            $taxTotal = 0;
+            
+            foreach ((array) $get('items') as $item) {
+                $qty = (float) ($item['quantity'] ?? 0);
+                $price = (float) ($item['unit_price'] ?? 0);
+                $baseLineTotal = $qty * $price;
+                $subtotal += $baseLineTotal;
+                
+                $itemTaxAmount = 0;
+                $isInclusive = false;
+                $hasTax = false;
+                if (!empty($item['tax_id'])) {
+                    $hasTax = true;
+                    $tax = \Tek2991\Accounting\Models\Tax::find($item['tax_id']);
+                    if ($tax) {
+                        $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
+                        $rateSum = (float) $tax->total_rate;
+                        
+                        if ($isInclusive) {
+                            $itemTaxAmount = $baseLineTotal * ($rateSum / (100 + $rateSum));
+                        } else {
+                            $itemTaxAmount = $baseLineTotal * ($rateSum / 100);
+                        }
+                    }
+                }
+                
+                $itemPreTaxTotal = $isInclusive ? ($baseLineTotal - $itemTaxAmount) : $baseLineTotal;
+                
+                if ($hasTax) {
+                    $taxableAmount += $itemPreTaxTotal;
+                }
+                
+                $taxTotal += $itemTaxAmount;
+            }
+            
+            // For credit notes, grand total is usually the pre-tax total + tax (which for inclusive is baseLineTotal, for exclusive is baseLineTotal + tax)
+            // Wait, if it's inclusive, itemPreTaxTotal + tax = baseLineTotal. 
+            // So grand total should be sum of (itemPreTaxTotal + tax). Let's calculate exactly that.
+            $grandTotal = 0;
+            foreach ((array) $get('items') as $item) {
+                $qty = (float) ($item['quantity'] ?? 0);
+                $price = (float) ($item['unit_price'] ?? 0);
+                $baseLineTotal = $qty * $price;
+                
+                $itemTaxAmount = 0;
+                $isInclusive = false;
+                if (!empty($item['tax_id'])) {
+                    $tax = \Tek2991\Accounting\Models\Tax::find($item['tax_id']);
+                    if ($tax) {
+                        $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
+                        $rateSum = (float) $tax->total_rate;
+                        if ($isInclusive) {
+                            $itemTaxAmount = $baseLineTotal * ($rateSum / (100 + $rateSum));
+                        } else {
+                            $itemTaxAmount = $baseLineTotal * ($rateSum / 100);
+                        }
+                    }
+                }
+                $itemPreTaxTotal = $isInclusive ? ($baseLineTotal - $itemTaxAmount) : $baseLineTotal;
+                $grandTotal += $itemPreTaxTotal + $itemTaxAmount;
+            }
+            
+            return [
+                'subtotal' => $subtotal,
+                'taxable_amount' => $taxableAmount,
+                'tax_total' => $taxTotal,
+                'grand_total' => $grandTotal,
+            ];
+        };
+
         return [
             Section::make('Credit Note Details')
                 ->columnSpan(1)
@@ -51,15 +124,31 @@ class CreditNoteForm
                 ->schema([
                     Placeholder::make('subtotal_placeholder')
                         ->label('Subtotal')
-                        ->content(fn ($record) => $record ? number_format($record->subtotal, 2) : '0.00'),
+                        ->content(function (Get $get) use ($calculateTotals) {
+                            $currency = \Tek2991\Accounting\Facades\Accounting::getCurrency();
+                            return $currency . ' ' . number_format($calculateTotals($get)['subtotal'], 2);
+                        }),
+                        
+                    Placeholder::make('taxable_amount_placeholder')
+                        ->label('Taxable Amount')
+                        ->content(function (Get $get) use ($calculateTotals) {
+                            $currency = \Tek2991\Accounting\Facades\Accounting::getCurrency();
+                            return $currency . ' ' . number_format($calculateTotals($get)['taxable_amount'], 2);
+                        }),
 
                     Placeholder::make('tax_total_placeholder')
                         ->label('Total Tax')
-                        ->content(fn ($record) => $record ? number_format($record->tax_total, 2) : '0.00'),
+                        ->content(function (Get $get) use ($calculateTotals) {
+                            $currency = \Tek2991\Accounting\Facades\Accounting::getCurrency();
+                            return $currency . ' ' . number_format($calculateTotals($get)['tax_total'], 2);
+                        }),
 
                     Placeholder::make('grand_total_placeholder')
                         ->label('Grand Total')
-                        ->content(fn ($record) => $record ? number_format($record->grand_total, 2) : '0.00')
+                        ->content(function (Get $get) use ($calculateTotals) {
+                            $currency = \Tek2991\Accounting\Facades\Accounting::getCurrency();
+                            return $currency . ' ' . number_format($calculateTotals($get)['grand_total'], 2);
+                        })
                         ->extraAttributes(['class' => 'text-xl font-bold']),
                 ]),
 
@@ -76,7 +165,7 @@ class CreditNoteForm
                                 ->afterStateUpdated(function ($state, Set $set) {
                                     if ($item = Item::find($state)) {
                                         $set('description', $item->description);
-                                        $set('unit_price', $item->unit_price);
+                                        $set('unit_price', $item->sale_price ?? $item->purchase_price);
                                         $set('tax_id', $item->sales_tax_id);
                                     }
                                 }),
@@ -88,15 +177,18 @@ class CreditNoteForm
                             TextInput::make('quantity')
                                 ->numeric()
                                 ->default(1)
+                                ->reactive()
                                 ->required(),
                                 
                             TextInput::make('unit_price')
                                 ->numeric()
+                                ->reactive()
                                 ->required(),
                                 
                             Select::make('tax_id')
                                 ->label('Tax')
                                 ->options(Tax::pluck('name', 'id'))
+                                ->reactive()
                                 ->searchable(),
                         ])
                         ->columns(5)

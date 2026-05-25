@@ -60,7 +60,7 @@ return [
     |
     */
 
-    'default_currency' => env('ACCOUNTING_DEFAULT_CURRENCY', 'USD'),
+    'default_currency' => env('ACCOUNTING_DEFAULT_CURRENCY', 'INR'),
 
     /*
     |--------------------------------------------------------------------------
@@ -82,11 +82,11 @@ return [
     'account_code' => [
         'digits' => 4,
         'ranges' => [
-            'asset'     => [1000, 1999],
+            'asset' => [1000, 1999],
             'liability' => [2000, 2999],
-            'equity'    => [3000, 3999],
-            'revenue'   => [4000, 4999],
-            'expense'   => [5000, 5999],
+            'equity' => [3000, 3999],
+            'revenue' => [4000, 4999],
+            'expense' => [5000, 5999],
         ],
     ],
 
