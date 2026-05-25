@@ -20,11 +20,13 @@ class AccountingSettings extends Page implements HasForms
 
     protected static \BackedEnum|string|null $navigationIcon = null;
 
-    protected static \UnitEnum|string|null $navigationGroup = 'Accounting';
+    protected static \UnitEnum|string|null $navigationGroup = 'Settings';
 
-    protected static ?int $navigationSort = 4;
+    protected static ?int $navigationSort = 1;
 
-    protected static ?string $navigationLabel = 'Settings';
+    protected static ?string $navigationLabel = 'Accounting Settings';
+    
+    protected ?string $heading = 'Accounting Settings';
 
     protected string $view = 'accounting::filament.pages.accounting-settings';
 
@@ -38,7 +40,6 @@ class AccountingSettings extends Page implements HasForms
             ['company_id' => $companyId],
             [
                 'default_currency'  => config('accounting.default_currency', 'USD'),
-                'fiscal_year_start' => config('accounting.fiscal_year_start', 1),
                 'company_name'      => null,
                 'company_email'     => null,
                 'company_address'   => null,
@@ -66,24 +67,6 @@ class AccountingSettings extends Page implements HasForms
                             ->label('Default Currency')
                             ->options($this->getCurrencyOptions())
                             ->searchable()
-                            ->required(),
-
-                        Forms\Components\Select::make('fiscal_year_start')
-                            ->label('Fiscal Year Start Month')
-                            ->options([
-                                1  => 'January',
-                                2  => 'February',
-                                3  => 'March',
-                                4  => 'April',
-                                5  => 'May',
-                                6  => 'June',
-                                7  => 'July',
-                                8  => 'August',
-                                9  => 'September',
-                                10 => 'October',
-                                11 => 'November',
-                                12 => 'December',
-                            ])
                             ->required(),
                     ]),
                 Section::make('Company Profile')
@@ -142,7 +125,6 @@ class AccountingSettings extends Page implements HasForms
             ['company_id' => $companyId],
             [
                 'default_currency'  => $data['default_currency'],
-                'fiscal_year_start' => $data['fiscal_year_start'],
                 'company_name'      => $data['company_name'] ?? null,
                 'company_email'     => $data['company_email'] ?? null,
                 'company_phone'     => $data['company_phone'] ?? null,

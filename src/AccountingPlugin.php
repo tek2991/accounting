@@ -132,6 +132,15 @@ class AccountingPlugin implements Plugin
                 AccountBalanceOverview::class,
             ]);
         }
+
+        $panel->navigationGroups([
+            'Sales',
+            'Purchases',
+            'Banking',
+            'Accounting',
+            'Catalog',
+            'Settings',
+        ]);
     }
 
     public function boot(Panel $panel): void

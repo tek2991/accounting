@@ -24,7 +24,6 @@ class Setting extends Model
     protected $fillable = [
         'company_id',
         'default_currency',
-        'fiscal_year_start',
         'company_name',
         'company_email',
         'company_address',
