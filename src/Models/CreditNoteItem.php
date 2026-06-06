@@ -20,6 +20,11 @@ class CreditNoteItem extends Model
         'tax_id',
         'tax_snapshot',
         'tax_amount',
+        'income_account_id',
+        'gross_amount',
+        'line_discount_amount',
+        'allocated_document_discount',
+        'net_amount',
     ];
 
     protected $casts = [
@@ -36,6 +41,10 @@ class CreditNoteItem extends Model
     protected function unitPrice(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
     protected function lineTotal(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
     protected function taxAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
+    protected function grossAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
+    protected function lineDiscountAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
+    protected function allocatedDocumentDiscount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
+    protected function netAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
 
     // Relationships
     public function creditNote(): BelongsTo { return $this->belongsTo(CreditNote::class, 'credit_note_id'); }

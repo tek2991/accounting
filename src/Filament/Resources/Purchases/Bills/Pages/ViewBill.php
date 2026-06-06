@@ -11,7 +11,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\DatePicker;
 use Tek2991\Accounting\Models\Account;
-use Tek2991\Accounting\Enums\AccountCategory;
+use Tek2991\Accounting\Enums\AccountType;
 
 class ViewBill extends ViewRecord
 {
@@ -46,7 +46,7 @@ class ViewBill extends ViewRecord
                         ->default(fn ($record) => $record->balance_due),
                     Select::make('payment_account_id')
                         ->label('Payment Account')
-                        ->options(Account::where('type', \Tek2991\Accounting\Enums\AccountType::CurrentAsset)->pluck('name', 'id'))
+                        ->options(Account::where('type', \Tek2991\Accounting\Enums\AccountType::Asset)->pluck('name', 'id'))
                         ->required(),
                     DatePicker::make('payment_date')
                         ->default(now())
@@ -55,8 +55,7 @@ class ViewBill extends ViewRecord
                 ])
                 ->action(function ($record, array $data) {
                     try {
-                        $data['amount'] = (int) round($data['amount'] * 100); // Minor units
-                        app(BillService::class)->recordPayment($record, $data);
+                                                app(BillService::class)->recordPayment($record, $data);
                         \Filament\Notifications\Notification::make()->title('Payment recorded')->success()->send();
                     } catch (\Exception $e) {
                         \Filament\Notifications\Notification::make()->title('Payment failed')->body($e->getMessage())->danger()->send();
@@ -76,6 +75,12 @@ class ViewBill extends ViewRecord
                         \Filament\Notifications\Notification::make()->title('Failed to cancel bill')->body($e->getMessage())->danger()->send();
                     }
                 }),
+            Actions\ActionGroup::make([
+                Actions\Action::make('issue_debit_note')
+                    ->label('Issue Debit Note')
+                    ->icon('heroicon-o-document-minus')
+                    ->url(fn ($record) => \Tek2991\Accounting\Filament\Resources\Purchases\DebitNotes\DebitNoteResource::getUrl('create') . '?bill_id=' . $record->id . '&contact_id=' . $record->contact_id)
+            ])->label('More')->icon('heroicon-m-ellipsis-vertical'),
         ];
     }
 }

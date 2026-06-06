@@ -99,16 +99,19 @@ class CreditNoteForm
                 ->schema([
                     Select::make('contact_id')
                         ->label('Customer')
-                        ->options(Contact::where('is_customer', true)->pluck('name', 'id'))
+                        ->relationship('contact', 'name', fn ($query) => $query->whereIn('type', [\Tek2991\Accounting\Enums\ContactType::Customer, \Tek2991\Accounting\Enums\ContactType::Both]))
                         ->searchable()
                         ->required()
+                        ->default(request()->query('contact_id'))
                         ->reactive()
                         ->afterStateUpdated(fn (Set $set) => $set('invoice_id', null)),
                         
                     Select::make('invoice_id')
-                        ->label('Invoice (Optional)')
+                        ->label('Invoice')
                         ->options(fn (Get $get) => Invoice::where('contact_id', $get('contact_id'))->pluck('invoice_number', 'id'))
                         ->searchable()
+                        ->required()
+                        ->default(request()->query('invoice_id'))
                         ->reactive(),
 
                     DatePicker::make('issue_date')

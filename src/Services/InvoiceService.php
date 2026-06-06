@@ -33,22 +33,69 @@ class InvoiceService
 
     public function recalculateTotals(Invoice $invoice): void
     {
-        $subtotal = 0;
-        $taxTotal = 0;
-        $discountAmount = 0;
+        $grossSubtotal = 0;
+        $totalItemDiscounts = 0;
 
+        // First pass: Gross amounts and item discounts
         foreach ($invoice->items as $item) {
-            // Line total = qty * unit_price
-            $baseLineTotal = $item->getRawOriginal('quantity') * $item->getRawOriginal('unit_price');
+            $qty = $item->getRawOriginal('quantity');
+            if (empty($qty) || $qty == 0) {
+                $qty = 1;
+            }
+            $price = $item->getRawOriginal('unit_price');
+            $gross = $qty * $price;
+            $item->gross_amount = $gross / 100;
             
-            // Item discount
             $itemDiscount = 0;
             if ($item->discount_type === DiscountType::Percentage) {
-                $itemDiscount = $baseLineTotal * ($item->getRawOriginal('discount_rate') / 100);
+                $itemDiscount = $gross * ($item->getRawOriginal('discount_rate') / 100);
             } elseif ($item->discount_type === DiscountType::Fixed) {
                 $itemDiscount = $item->getRawOriginal('discount_amount');
             }
-            $discountedLineTotal = $baseLineTotal - $itemDiscount;
+            $item->line_discount_amount = $itemDiscount / 100;
+            
+            $grossSubtotal += $gross;
+            $totalItemDiscounts += $itemDiscount;
+        }
+
+        $preDocSubtotal = $grossSubtotal - $totalItemDiscounts;
+        $invoice->subtotal = $grossSubtotal / 100;
+        
+        // Document discount
+        $docDiscount = 0;
+        if ($invoice->discount_type === DiscountType::Percentage) {
+            $docDiscount = $preDocSubtotal * ($invoice->getRawOriginal('discount_rate') / 100);
+        } elseif ($invoice->discount_type === DiscountType::Fixed) {
+            $docDiscount = $invoice->getRawOriginal('discount_amount');
+        }
+        $invoice->discount_amount = $docDiscount / 100;
+
+        // Second pass: Allocation and taxes
+        $remainingDocDiscount = $docDiscount;
+        $itemsCount = $invoice->items->count();
+        $i = 0;
+        
+        $taxTotal = 0;
+        $netItemsTotal = 0;
+
+        foreach ($invoice->items as $item) {
+            $i++;
+            $lineNetBeforeDoc = ($item->getRawOriginal('gross_amount') - $item->getRawOriginal('line_discount_amount'));
+            
+            $allocated = 0;
+            if ($itemsCount > 0) {
+                if ($i === $itemsCount) {
+                    $allocated = $remainingDocDiscount;
+                } else {
+                    $proportion = $preDocSubtotal > 0 ? ($lineNetBeforeDoc / $preDocSubtotal) : 0;
+                    $allocated = round($docDiscount * $proportion);
+                    $remainingDocDiscount -= $allocated;
+                }
+            }
+            $item->allocated_document_discount = $allocated / 100;
+            
+            $taxableValue = $lineNetBeforeDoc - $allocated;
+            $item->net_amount = $taxableValue / 100;
             
             // Calculate Tax
             $itemTaxAmount = 0;
@@ -58,37 +105,28 @@ class InvoiceService
                 $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
                 if ($tax) {
                     $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
-                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($discountedLineTotal, $tax);
+                    // Invoices don't have a document-level mode, they use the tax type directly
+                    $docMode = $isInclusive ? 'inclusive' : 'exclusive';
+                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($taxableValue, $tax, $docMode, 'sales');
                     $itemTaxAmount = $taxComponents->sum('amount');
                     $item->tax_snapshot = $taxComponents->toArray();
                 }
             }
             
-            // Determine item's pre-tax line total
-            $itemPreTaxTotal = $isInclusive ? ($discountedLineTotal - $itemTaxAmount) : $discountedLineTotal;
+            $itemPreTaxTotal = $isInclusive ? ($taxableValue - $itemTaxAmount) : $taxableValue;
             
-            $item->line_total = $itemPreTaxTotal / 100; // Accessor handles minor units
-            $item->tax_amount = $itemTaxAmount / 100;
+            $item->line_total = $itemPreTaxTotal / 100;
+            $item->tax_amount = $itemTaxAmount / 100; 
             
             $item->save();
 
-            $subtotal += $itemPreTaxTotal;
+            $netItemsTotal += $itemPreTaxTotal;
             $taxTotal += $itemTaxAmount;
         }
 
-        $invoice->subtotal = $subtotal / 100;
-        
-        // Invoice discount
-        if ($invoice->discount_type === DiscountType::Percentage) {
-            $discountAmount = $subtotal * ($invoice->getRawOriginal('discount_rate') / 100);
-        } elseif ($invoice->discount_type === DiscountType::Fixed) {
-            $discountAmount = $invoice->getRawOriginal('discount_amount');
-        }
-
-        $invoice->discount_amount = $discountAmount / 100;
         $invoice->tax_total = $taxTotal / 100;
         
-        $grandTotal = $subtotal - $discountAmount + $taxTotal;
+        $grandTotal = $netItemsTotal + $taxTotal;
         $invoice->grand_total = $grandTotal / 100;
         
         $balanceDue = $grandTotal - $invoice->getRawOriginal('amount_paid');
@@ -109,10 +147,8 @@ class InvoiceService
             $this->postingGuard->assertInvoicePostable($invoice);
 
             // 1. Create Journal Entries
-            $receivableAccountId = $invoice->contact->receivable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $invoice->company_id)
-                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Asset)
-                ->where('default', true)
-                ->where('name', 'Accounts Receivable')
+            $receivableAccountId = $invoice->contact->receivableAccount?->id ?? \Tek2991\Accounting\Models\Account::where('company_id', $invoice->company_id)
+                ->where('system_role', \Tek2991\Accounting\Enums\SystemRole::TradeReceivable)
                 ->value('id');
 
             if (!$receivableAccountId) {
@@ -125,24 +161,30 @@ class InvoiceService
             $entries[] = [
                 'account_id' => $receivableAccountId,
                 'type' => 'debit',
-                'amount' => $invoice->getRawOriginal('grand_total'),
+                'amount' => $invoice->grand_total,
                 'description' => "Invoice {$invoice->invoice_number}",
             ];
 
-            // CR: Income Accounts & Taxes from items
+            // CR: Income Accounts (These are natively reduced by both line and doc discounts)
             $incomeAccounts = [];
             $taxAccounts = [];
 
             foreach ($invoice->items as $item) {
-                $incAccountId = $item->income_account_id ?? $invoice->default_income_account_id;
+                $incAccountId = null;
+                if ($item->line_type === \Tek2991\Accounting\Enums\DocumentLineType::Item) {
+                    $incAccountId = $item->item?->income_account_id;
+                } elseif ($item->line_type === \Tek2991\Accounting\Enums\DocumentLineType::Account) {
+                    $incAccountId = $item->income_account_id;
+                }
+                
                 if (!$incAccountId) {
-                    throw new Exception("Missing income account for item.");
+                    throw new Exception("Missing income account for invoice line item.");
                 }
 
                 if (!isset($incomeAccounts[$incAccountId])) {
                     $incomeAccounts[$incAccountId] = 0;
                 }
-                $incomeAccounts[$incAccountId] += $item->getRawOriginal('line_total');
+                $incomeAccounts[$incAccountId] += $item->line_total;
 
                 // Aggregate taxes from snapshot
                 if ($item->tax_snapshot) {
@@ -151,7 +193,7 @@ class InvoiceService
                         if (!isset($taxAccounts[$taxAccId])) {
                             $taxAccounts[$taxAccId] = 0;
                         }
-                        $taxAccounts[$taxAccId] += $taxComp['amount'];
+                        $taxAccounts[$taxAccId] += ($taxComp['amount'] / 100);
                     }
                 }
             }
@@ -197,7 +239,7 @@ class InvoiceService
                 ->event('invoice.posted')
                 ->withProperties([
                     'transaction_id' => $transaction->id,
-                    'grand_total' => $invoice->getRawOriginal('grand_total')
+                    'grand_total' => $invoice->grand_total
                 ])
                 ->log("Invoice {$invoice->invoice_number} posted");
         });
@@ -211,10 +253,8 @@ class InvoiceService
             
             $paymentAmount = $paymentData['amount'];
 
-            $receivableAccountId = $invoice->contact->receivable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $invoice->company_id)
-                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Asset)
-                ->where('default', true)
-                ->where('name', 'Accounts Receivable')
+            $receivableAccountId = $invoice->contact->receivableAccount?->id ?? \Tek2991\Accounting\Models\Account::where('company_id', $invoice->company_id)
+                ->where('system_role', \Tek2991\Accounting\Enums\SystemRole::TradeReceivable)
                 ->value('id');
 
             if (!$receivableAccountId) {
@@ -255,10 +295,10 @@ class InvoiceService
 
             // Update invoice amounts
             $newPaid = $invoice->getRawOriginal('amount_paid') + $paymentAmount;
-            $newBalance = $invoice->getRawOriginal('grand_total') - $newPaid;
+            $newBalance = $invoice->grand_total - $newPaid;
 
             $invoice->amount_paid = $newPaid / 100;
-            $invoice->balance_due = $newBalance / 100;
+            $invoice->balance_due = $newBalance;
 
             if ($newBalance <= 0) {
                 $invoice->status = InvoiceStatus::Paid;

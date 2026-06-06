@@ -46,6 +46,20 @@ class TransactionService
             );
         }
 
+        $type = $transactionData['type'] ?? null;
+        if ($type instanceof \Tek2991\Accounting\Enums\TransactionType) {
+            $type = $type->value;
+        }
+
+        if ($type === \Tek2991\Accounting\Enums\TransactionType::Journal->value) {
+            foreach ($entries as $entry) {
+                $account = \Tek2991\Accounting\Models\Account::find($entry['account_id']);
+                if ($account && $account->is_control_account) {
+                    throw new \Tek2991\Accounting\Exceptions\InvalidOperationException("Cannot post manual journal entry to control account: {$account->name}");
+                }
+            }
+        }
+
         $amount = $this->validateBalance($entries);
         
         if (!isset($transactionData['amount'])) {

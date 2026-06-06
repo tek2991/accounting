@@ -96,16 +96,19 @@ class DebitNoteForm
                 ->schema([
                     Select::make('contact_id')
                         ->label('Vendor')
-                        ->options(Contact::where('is_vendor', true)->pluck('name', 'id'))
+                        ->relationship('contact', 'name', fn ($query) => $query->whereIn('type', [\Tek2991\Accounting\Enums\ContactType::Vendor, \Tek2991\Accounting\Enums\ContactType::Both]))
                         ->searchable()
                         ->required()
+                        ->default(request()->query('contact_id'))
                         ->reactive()
                         ->afterStateUpdated(fn (Set $set) => $set('bill_id', null)),
                         
                     Select::make('bill_id')
-                        ->label('Bill (Optional)')
+                        ->label('Bill')
                         ->options(fn (Get $get) => Bill::where('contact_id', $get('contact_id'))->pluck('bill_number', 'id'))
                         ->searchable()
+                        ->required()
+                        ->default(request()->query('bill_id'))
                         ->reactive(),
 
                     DatePicker::make('issue_date')

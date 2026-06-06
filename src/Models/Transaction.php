@@ -9,7 +9,6 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Tek2991\Accounting\Concerns\Blamable;
 use Tek2991\Accounting\Concerns\CompanyOwned;
-use Tek2991\Accounting\Enums\AccountCategory;
 use Tek2991\Accounting\Enums\AccountType;
 use Tek2991\Accounting\Enums\JournalEntryType;
 use Tek2991\Accounting\Enums\TransactionType;
@@ -196,36 +195,11 @@ class Transaction extends Model
      */
     public static function getCategoryAccountOptions(TransactionType $type): array
     {
-        $validTypes = match ($type) {
-            TransactionType::Deposit => [
-                AccountType::OperatingRevenue,
-                AccountType::NonOperatingRevenue,
-                AccountType::ContraRevenue,
-                AccountType::CurrentLiability,
-                AccountType::NonCurrentLiability,
-                AccountType::Equity,
-                AccountType::ContraExpense,
-            ],
-            TransactionType::Withdrawal => [
-                AccountType::OperatingExpense,
-                AccountType::NonOperatingExpense,
-                AccountType::ContraExpense,
-                AccountType::CurrentLiability,
-                AccountType::NonCurrentLiability,
-                AccountType::Equity,
-                AccountType::ContraRevenue,
-            ],
-            default => null,
-        };
-
+        // Allow all account types for manual transactions, but filter out Bank Accounts
         $query = Account::query()->active()->isNotBankAccount();
 
-        if ($validTypes !== null) {
-            $query->whereIn('type', $validTypes);
-        }
-
         return $query->get()
-            ->groupBy(fn (Account $account) => $account->category->getLabel())
+            ->groupBy(fn (Account $account) => $account->type->getPluralLabel())
             ->map(fn ($accounts, string $category) => $accounts->pluck('name', 'id'))
             ->toArray();
     }
@@ -238,7 +212,7 @@ class Transaction extends Model
         return Account::query()
             ->active()
             ->get()
-            ->groupBy(fn (Account $account) => $account->category->getLabel())
+            ->groupBy(fn (Account $account) => $account->type->getPluralLabel())
             ->map(fn ($accounts, string $category) => $accounts->pluck('name', 'id'))
             ->toArray();
     }

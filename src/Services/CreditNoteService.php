@@ -34,7 +34,12 @@ class CreditNoteService
         $taxTotal = 0;
 
         foreach ($cn->items as $item) {
-            $baseLineTotal = $item->getRawOriginal('quantity') * $item->getRawOriginal('unit_price');
+            // Line total = qty * unit_price
+            $qty = $item->getRawOriginal('quantity');
+            if (empty($qty) || $qty == 0) {
+                $qty = 1;
+            }
+            $baseLineTotal = $qty * $item->getRawOriginal('unit_price');
             
             // Calculate Tax
             $itemTaxAmount = 0;
@@ -44,7 +49,7 @@ class CreditNoteService
                 $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
                 if ($tax) {
                     $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
-                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax);
+                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax, null, 'sales');
                     $itemTaxAmount = $taxComponents->sum('amount');
                     $item->tax_snapshot = $taxComponents->toArray();
                 }
@@ -52,6 +57,11 @@ class CreditNoteService
             
             // Determine item's pre-tax line total
             $itemPreTaxTotal = $isInclusive ? ($baseLineTotal - $itemTaxAmount) : $baseLineTotal;
+            
+            $item->gross_amount = $baseLineTotal / 100;
+            $item->line_discount_amount = 0;
+            $item->allocated_document_discount = 0;
+            $item->net_amount = $baseLineTotal / 100;
             
             $item->line_total = $itemPreTaxTotal / 100;
             $item->tax_amount = $itemTaxAmount / 100;
@@ -87,10 +97,8 @@ class CreditNoteService
                 throw new Exception("Only draft credit notes can be posted.");
             }
 
-            $receivableAccountId = $cn->contact->receivable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $cn->company_id)
-                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Asset)
-                ->where('default', true)
-                ->where('name', 'Accounts Receivable')
+            $receivableAccountId = $cn->contact->receivableAccount?->id ?? \Tek2991\Accounting\Models\Account::where('company_id', $cn->company_id)
+                ->where('system_role', \Tek2991\Accounting\Enums\SystemRole::TradeReceivable)
                 ->value('id');
 
             if (!$receivableAccountId) {
@@ -103,7 +111,7 @@ class CreditNoteService
             $entries[] = [
                 'account_id' => $receivableAccountId,
                 'type' => 'credit',
-                'amount' => $cn->getRawOriginal('grand_total'),
+                'amount' => $cn->grand_total,
                 'description' => "Credit Note {$cn->credit_note_number}",
             ];
 
@@ -112,7 +120,7 @@ class CreditNoteService
             $taxAccounts = [];
 
             foreach ($cn->items as $item) {
-                $incAccountId = $item->item->income_account_id ?? $cn->invoice?->default_income_account_id;
+                $incAccountId = $item->item->income_account_id ?? null;
                 if (!$incAccountId) {
                     throw new Exception("Missing income account for item.");
                 }
@@ -120,7 +128,7 @@ class CreditNoteService
                 if (!isset($incomeAccounts[$incAccountId])) {
                     $incomeAccounts[$incAccountId] = 0;
                 }
-                $incomeAccounts[$incAccountId] += $item->getRawOriginal('line_total');
+                $incomeAccounts[$incAccountId] += $item->line_total;
 
                 if ($item->tax_snapshot) {
                     foreach ($item->tax_snapshot as $taxComp) {
@@ -128,7 +136,7 @@ class CreditNoteService
                         if (!isset($taxAccounts[$taxAccId])) {
                             $taxAccounts[$taxAccId] = 0;
                         }
-                        $taxAccounts[$taxAccId] += $taxComp['amount'];
+                        $taxAccounts[$taxAccId] += ($taxComp['amount'] / 100);
                     }
                 }
             }
@@ -172,7 +180,7 @@ class CreditNoteService
                 ->event('credit_note.posted')
                 ->withProperties([
                     'transaction_id' => $transaction->id,
-                    'grand_total' => $cn->getRawOriginal('grand_total')
+                    'grand_total' => $cn->grand_total
                 ])
                 ->log("Credit Note {$cn->credit_note_number} posted");
         });

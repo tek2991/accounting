@@ -32,62 +32,108 @@ class BillService
 
     public function recalculateTotals(Bill $bill): void
     {
-        $subtotal = 0;
-        $taxTotal = 0;
-        $discountAmount = 0;
+        $grossSubtotal = 0;
+        $totalItemDiscounts = 0;
 
+        // First pass: Gross amounts and item discounts
         foreach ($bill->items as $item) {
-            // Line total = qty * unit_price
-            $baseLineTotal = $item->getRawOriginal('quantity') * $item->getRawOriginal('unit_price');
+            $qty = $item->getRawOriginal('quantity');
+            if (empty($qty) || $qty == 0) {
+                $qty = 1;
+            }
+            $price = $item->getRawOriginal('unit_price');
+            $gross = $qty * $price;
+            $item->gross_amount = $gross / 100;
             
-            // Item discount
             $itemDiscount = 0;
             if ($item->discount_type === DiscountType::Percentage) {
-                $itemDiscount = $baseLineTotal * ($item->getRawOriginal('discount_rate') / 100);
+                $itemDiscount = $gross * ($item->getRawOriginal('discount_rate') / 100);
             } elseif ($item->discount_type === DiscountType::Fixed) {
                 $itemDiscount = $item->getRawOriginal('discount_amount');
             }
-            $discountedLineTotal = $baseLineTotal - $itemDiscount;
+            $item->line_discount_amount = $itemDiscount / 100;
+            
+            $grossSubtotal += $gross;
+            $totalItemDiscounts += $itemDiscount;
+        }
+
+        $preDocSubtotal = $grossSubtotal - $totalItemDiscounts;
+        $bill->subtotal = $grossSubtotal / 100;
+        
+        // Document discount
+        $docDiscount = 0;
+        if ($bill->discount_type === DiscountType::Percentage) {
+            $docDiscount = $preDocSubtotal * ($bill->getRawOriginal('discount_rate') / 100);
+        } elseif ($bill->discount_type === DiscountType::Fixed) {
+            $docDiscount = $bill->getRawOriginal('discount_amount');
+        }
+        $bill->discount_amount = $docDiscount / 100;
+
+        // Second pass: Allocation and taxes
+        $remainingDocDiscount = $docDiscount;
+        $itemsCount = $bill->items->count();
+        $i = 0;
+        
+        $taxTotal = 0;
+        $netItemsTotal = 0;
+
+        foreach ($bill->items as $item) {
+            $i++;
+            $lineNetBeforeDoc = ($item->getRawOriginal('gross_amount') - $item->getRawOriginal('line_discount_amount'));
+            
+            $allocated = 0;
+            if ($itemsCount > 0) {
+                if ($i === $itemsCount) {
+                    $allocated = $remainingDocDiscount;
+                } else {
+                    $proportion = $preDocSubtotal > 0 ? ($lineNetBeforeDoc / $preDocSubtotal) : 0;
+                    $allocated = round($docDiscount * $proportion);
+                    $remainingDocDiscount -= $allocated;
+                }
+            }
+            $item->allocated_document_discount = $allocated / 100;
+            
+            $taxableValue = $lineNetBeforeDoc - $allocated;
+            $item->net_amount = $taxableValue / 100;
             
             // Calculate Tax
             $itemTaxAmount = 0;
             $isInclusive = false;
+            $docMode = $bill->tax_computation_mode ?? 'exclusive';
             
             if ($item->tax_id) {
-                $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
-                if ($tax) {
-                    $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
-                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($discountedLineTotal, $tax);
-                    $itemTaxAmount = $taxComponents->sum('amount');
-                    $item->tax_snapshot = $taxComponents->toArray();
+                if ($docMode === 'manual') {
+                    $isInclusive = false;
+                    if (is_array($item->tax_snapshot)) {
+                        foreach ($item->tax_snapshot as $comp) {
+                            $itemTaxAmount += (int) ($comp['amount'] ?? 0);
+                        }
+                    }
+                } else {
+                    $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
+                    if ($tax) {
+                        $isInclusive = $docMode === 'inclusive';
+                        $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($taxableValue, $tax, $docMode, 'purchase');
+                        $itemTaxAmount = $taxComponents->sum('amount');
+                        $item->tax_snapshot = $taxComponents->toArray();
+                    }
                 }
             }
             
-            // Determine item's pre-tax line total
-            $itemPreTaxTotal = $isInclusive ? ($discountedLineTotal - $itemTaxAmount) : $discountedLineTotal;
+            $itemPreTaxTotal = $isInclusive ? ($taxableValue - $itemTaxAmount) : $taxableValue;
             
             $item->line_total = $itemPreTaxTotal / 100;
             $item->tax_amount = $itemTaxAmount / 100; 
             
             $item->save();
 
-            $subtotal += $itemPreTaxTotal;
+            $netItemsTotal += $itemPreTaxTotal;
             $taxTotal += $itemTaxAmount;
         }
 
-        $bill->subtotal = $subtotal / 100;
-        
-        // Bill discount
-        if ($bill->discount_type === DiscountType::Percentage) {
-            $discountAmount = $subtotal * ($bill->getRawOriginal('discount_rate') / 100);
-        } elseif ($bill->discount_type === DiscountType::Fixed) {
-            $discountAmount = $bill->getRawOriginal('discount_amount');
-        }
-
-        $bill->discount_amount = $discountAmount / 100;
         $bill->tax_total = $taxTotal / 100;
         
-        $grandTotal = $subtotal - $discountAmount + $taxTotal;
+        $grandTotal = $netItemsTotal + $taxTotal;
         $bill->grand_total = $grandTotal / 100;
         
         $balanceDue = $grandTotal - $bill->getRawOriginal('amount_paid');
@@ -107,10 +153,8 @@ class BillService
             
             $this->postingGuard->assertBillPostable($bill);
 
-            $payableAccountId = $bill->contact->payable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $bill->company_id)
-                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Liability)
-                ->where('default', true)
-                ->where('name', 'Accounts Payable')
+            $payableAccountId = $bill->contact->payableAccount?->id ?? \Tek2991\Accounting\Models\Account::where('company_id', $bill->company_id)
+                ->where('system_role', \Tek2991\Accounting\Enums\SystemRole::TradePayable)
                 ->value('id');
                 
             if (!$payableAccountId) {
@@ -123,24 +167,30 @@ class BillService
             $entries[] = [
                 'account_id' => $payableAccountId,
                 'type' => 'credit',
-                'amount' => $bill->getRawOriginal('grand_total'),
+                'amount' => $bill->grand_total,
                 'description' => "Bill {$bill->bill_number}",
             ];
 
-            // DR: Expense Accounts & Taxes from items
+            // DR: Expense/Asset Accounts (These are natively reduced by both line and doc discounts)
             $expenseAccounts = [];
             $taxAccounts = [];
 
             foreach ($bill->items as $item) {
-                $expAccountId = $item->expense_account_id ?? $bill->default_expense_account_id;
+                $expAccountId = null;
+                if ($item->line_type === \Tek2991\Accounting\Enums\DocumentLineType::Item) {
+                    $expAccountId = $item->item?->expense_account_id;
+                } elseif ($item->line_type === \Tek2991\Accounting\Enums\DocumentLineType::Account) {
+                    $expAccountId = $item->expense_account_id;
+                }
+                
                 if (!$expAccountId) {
-                    throw new Exception("Missing expense account for item.");
+                    throw new Exception("Missing expense account for bill line item.");
                 }
 
                 if (!isset($expenseAccounts[$expAccountId])) {
                     $expenseAccounts[$expAccountId] = 0;
                 }
-                $expenseAccounts[$expAccountId] += $item->getRawOriginal('line_total');
+                $expenseAccounts[$expAccountId] += $item->line_total;
 
                 // Aggregate taxes from snapshot
                 if ($item->tax_snapshot) {
@@ -149,7 +199,7 @@ class BillService
                         if (!isset($taxAccounts[$taxAccId])) {
                             $taxAccounts[$taxAccId] = 0;
                         }
-                        $taxAccounts[$taxAccId] += $taxComp['amount'];
+                        $taxAccounts[$taxAccId] += ($taxComp['amount'] / 100);
                     }
                 }
             }
@@ -195,7 +245,7 @@ class BillService
                 ->event('bill.posted')
                 ->withProperties([
                     'transaction_id' => $transaction->id,
-                    'grand_total' => $bill->getRawOriginal('grand_total')
+                    'grand_total' => $bill->grand_total
                 ])
                 ->log("Bill {$bill->bill_number} posted");
         });
@@ -209,10 +259,8 @@ class BillService
             
             $paymentAmount = $paymentData['amount'];
 
-            $payableAccountId = $bill->contact->payable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $bill->company_id)
-                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Liability)
-                ->where('default', true)
-                ->where('name', 'Accounts Payable')
+            $payableAccountId = $bill->contact->payableAccount?->id ?? \Tek2991\Accounting\Models\Account::where('company_id', $bill->company_id)
+                ->where('system_role', \Tek2991\Accounting\Enums\SystemRole::TradePayable)
                 ->value('id');
 
             if (!$payableAccountId) {
@@ -253,10 +301,10 @@ class BillService
 
             // Update bill amounts
             $newPaid = $bill->getRawOriginal('amount_paid') + $paymentAmount;
-            $newBalance = $bill->getRawOriginal('grand_total') - $newPaid;
+            $newBalance = $bill->grand_total - $newPaid;
 
             $bill->amount_paid = $newPaid / 100;
-            $bill->balance_due = $newBalance / 100;
+            $bill->balance_due = $newBalance;
 
             if ($newBalance <= 0) {
                 $bill->status = BillStatus::Paid;

@@ -3,7 +3,7 @@
 namespace Tek2991\Accounting\Services;
 
 use Illuminate\Support\Facades\DB;
-use Tek2991\Accounting\Enums\AccountCategory;
+use Tek2991\Accounting\Enums\AccountType;
 use Tek2991\Accounting\Enums\JournalEntryType;
 use Tek2991\Accounting\Models\Account;
 use Tek2991\Accounting\ValueObjects\Money;
@@ -38,7 +38,7 @@ class AccountService
     {
         $result = $this->getAccountBalances($startDate, $endDate, [$account->id])->first();
 
-        $netMovement = $account->category->calculateNetMovement(
+        $netMovement = $account->type->calculateNetMovement(
             $result->total_debit ?? 0,
             $result->total_credit ?? 0
         );
@@ -52,13 +52,13 @@ class AccountService
      */
     public function getStartingBalance(Account $account, string $startDate, bool $includeNominal = false): ?Money
     {
-        if (! $includeNominal && $account->category->isNominal()) {
+        if (! $includeNominal && $account->type->isNominal()) {
             return null;
         }
 
         $result = $this->getAccountBalances('1970-01-01', $startDate, [$account->id], true)->first();
 
-        $balance = $account->category->calculateNetMovement(
+        $balance = $account->type->calculateNetMovement(
             $result->total_debit ?? 0,
             $result->total_credit ?? 0
         );
@@ -124,9 +124,9 @@ class AccountService
      *
      * @return array<int, array{account: Account, balance: Money}>
      */
-    public function getCategoryBalances(AccountCategory $category, string $startDate, string $endDate): array
+    public function getTypeBalances(AccountType $type, string $startDate, string $endDate): array
     {
-        $accounts = Account::ofCategory($category)->active()->get();
+        $accounts = Account::ofType($type)->active()->get();
         $results = [];
 
         foreach ($accounts as $account) {
@@ -142,9 +142,9 @@ class AccountService
     /**
      * Get the total balance across all accounts in a category.
      */
-    public function getCategoryTotal(AccountCategory $category, string $startDate, string $endDate): Money
+    public function getTypeTotal(AccountType $type, string $startDate, string $endDate): Money
     {
-        $balances = $this->getCategoryBalances($category, $startDate, $endDate);
+        $balances = $this->getTypeBalances($type, $startDate, $endDate);
         $currency = \Tek2991\Accounting\Facades\Accounting::getCurrency();
         $total = Money::zero($currency);
 
@@ -161,9 +161,9 @@ class AccountService
      */
     public function verifyAccountingEquation(string $startDate, string $endDate): bool
     {
-        $assets = $this->getCategoryTotal(AccountCategory::Asset, $startDate, $endDate);
-        $liabilities = $this->getCategoryTotal(AccountCategory::Liability, $startDate, $endDate);
-        $equity = $this->getCategoryTotal(AccountCategory::Equity, $startDate, $endDate);
+        $assets = $this->getTypeTotal(AccountType::Asset, $startDate, $endDate);
+        $liabilities = $this->getTypeTotal(AccountType::Liability, $startDate, $endDate);
+        $equity = $this->getTypeTotal(AccountType::Equity, $startDate, $endDate);
 
         return $assets->getAmount() === ($liabilities->getAmount() + $equity->getAmount());
     }

@@ -16,50 +16,42 @@ return new class extends Migration
         $prefix = $this->prefix();
 
         // ──────────────────────────────────────────────────────────
-        // Account Subtypes
-        // ──────────────────────────────────────────────────────────
-        Schema::create("{$prefix}account_subtypes", function (Blueprint $table) use ($prefix) {
-            $table->id();
-            $table->foreignId('company_id')->constrained()->cascadeOnDelete();
-            $table->string('category', 20);  // AccountCategory enum
-            $table->string('type', 30);      // AccountType enum
-            $table->string('name');
-            $table->string('description')->nullable();
-
-            $table->unique(['company_id', 'type', 'name'], "{$prefix}subtypes_unique");
-            $table->index('company_id', "{$prefix}subtypes_company_idx");
-        });
-
-        // ──────────────────────────────────────────────────────────
         // Chart of Accounts
         // ──────────────────────────────────────────────────────────
         Schema::create("{$prefix}accounts", function (Blueprint $table) use ($prefix) {
             $table->id();
             $table->foreignId('company_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('subtype_id')
-                ->nullable()
-                ->constrained("{$prefix}account_subtypes")
-                ->nullOnDelete();
             $table->foreignId('parent_id')
                 ->nullable()
                 ->constrained("{$prefix}accounts")
                 ->nullOnDelete();
-            $table->string('category', 20);   // AccountCategory enum
-            $table->string('type', 30);       // AccountType enum
-            $table->string('code', 10);
+            $table->foreignId('contact_id')
+                ->nullable()
+                ->constrained("{$prefix}contacts")
+                ->nullOnDelete();
+            
+            $table->string('type', 20);              // AccountType enum
+            $table->string('reporting_class', 30)->nullable();  // ReportingClass enum
+            $table->string('system_role', 30)->nullable();      // SystemRole enum
+            $table->boolean('is_control_account')->default(false);
+            
+            $table->string('code', 20)->nullable();
             $table->string('name');
             $table->string('currency_code', 3)->default('USD');
             $table->text('description')->nullable();
+            
             $table->boolean('archived')->default(false);
             $table->boolean('default')->default(false);
+            
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('updated_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
 
             $table->unique(['company_id', 'code'], "{$prefix}accounts_code_unique");
             $table->index('company_id', "{$prefix}accounts_company_idx");
-            $table->index('category', "{$prefix}accounts_category_idx");
             $table->index('type', "{$prefix}accounts_type_idx");
+            $table->index('reporting_class', "{$prefix}accounts_rep_class_idx");
+            $table->index('system_role', "{$prefix}accounts_sys_role_idx");
             $table->index('archived', "{$prefix}accounts_archived_idx");
         });
 
@@ -127,6 +119,5 @@ return new class extends Migration
         Schema::dropIfExists("{$prefix}journal_entries");
         Schema::dropIfExists("{$prefix}transactions");
         Schema::dropIfExists("{$prefix}accounts");
-        Schema::dropIfExists("{$prefix}account_subtypes");
     }
 };

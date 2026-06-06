@@ -5,10 +5,10 @@ namespace Tek2991\Accounting\Filament\Resources\Accounts\Schemas;
 use Filament\Forms;
 use Filament\Schemas\Schema;
 use Filament\Schemas\Components\Section;
-use Tek2991\Accounting\Enums\AccountCategory;
 use Tek2991\Accounting\Enums\AccountType;
+use Tek2991\Accounting\Enums\ReportingClass;
+use Tek2991\Accounting\Enums\SystemRole;
 use Tek2991\Accounting\Models\Account;
-use Tek2991\Accounting\Models\AccountSubtype;
 
 class AccountForm
 {
@@ -19,82 +19,50 @@ class AccountForm
                 Section::make('Account Details')
                     ->columns(2)
                     ->components([
-                        Forms\Components\Select::make('category')
-                            ->options(AccountCategory::class)
+                        Forms\Components\Select::make('type')
+                            ->label('Category')
+                            ->options(AccountType::class)
                             ->required()
                             ->reactive()
                             ->afterStateUpdated(function (\Filament\Schemas\Components\Utilities\Set $set) {
-                                $set('type', null);
-                                $set('subtype_id', null);
+                                $set('reporting_class', null);
                             }),
 
-                        Forms\Components\Select::make('type')
+                        Forms\Components\Select::make('reporting_class')
                             ->options(function (\Filament\Schemas\Components\Utilities\Get $get) {
-                                $category = $get('category');
-                                if (! $category) {
-                                    return [];
+                                $type = $get('type');
+                                if (! $type) {
+                                    return ReportingClass::class; // Or all if type not selected
                                 }
-                                $category = $category instanceof AccountCategory
-                                    ? $category
-                                    : AccountCategory::from($category);
+                                $typeEnum = $type instanceof AccountType
+                                    ? $type
+                                    : AccountType::from($type);
 
-                                return collect(AccountType::forCategory($category))
-                                    ->mapWithKeys(fn (AccountType $type) => [$type->value => $type->getLabel()]);
+                                return collect(ReportingClass::cases())
+                                    ->filter(fn (ReportingClass $rc) => $rc->getAccountType() === $typeEnum)
+                                    ->mapWithKeys(fn (ReportingClass $rc) => [$rc->value => $rc->getLabel()]);
                             })
-                            ->required()
-                            ->reactive()
-                            ->afterStateUpdated(fn (\Filament\Schemas\Components\Utilities\Set $set) => $set('subtype_id', null)),
+                            ->required(),
 
                         Forms\Components\TextInput::make('code')
-                            ->required()
-                            ->maxLength(10)
-                            ->unique(ignoreRecord: true, modifyRuleUsing: function ($rule, \Filament\Schemas\Components\Utilities\Get $get) {
-                                return $rule;
-                            })
-                            ->helperText(function (\Filament\Schemas\Components\Utilities\Get $get) {
-                                $category = $get('category');
-                                if (! $category) {
-                                    return 'Select a category first';
-                                }
-                                $category = $category instanceof AccountCategory
-                                    ? $category
-                                    : AccountCategory::from($category);
-
-                                $start = $category->getCodeRangeStart();
-                                $end = $category->getCodeRangeEnd();
-
-                                return "Recommended range: {$start}–{$end}";
-                            }),
+                            ->nullable()
+                            ->maxLength(20)
+                            ->unique(ignoreRecord: true),
 
                         Forms\Components\TextInput::make('name')
                             ->required()
                             ->maxLength(255),
 
-                        Forms\Components\Select::make('subtype_id')
-                            ->label('Subtype')
-                            ->relationship('subtype', 'name')
-                            ->options(function (\Filament\Schemas\Components\Utilities\Get $get) {
-                                $type = $get('type');
-                                if (! $type) {
-                                    return [];
-                                }
-
-                                return AccountSubtype::where('type', $type)
-                                    ->pluck('name', 'id');
-                            })
-                            ->searchable()
-                            ->nullable(),
-
                         Forms\Components\Select::make('parent_id')
                             ->label('Parent Account')
                             ->relationship('parent', 'name')
                             ->options(function (\Filament\Schemas\Components\Utilities\Get $get, ?Account $record) {
-                                $category = $get('category');
-                                if (! $category) {
-                                    return [];
+                                $type = $get('type');
+                                $query = Account::query();
+                                
+                                if ($type) {
+                                    $query->where('type', $type);
                                 }
-
-                                $query = Account::where('category', $category);
 
                                 if ($record) {
                                     $query->where('id', '!=', $record->id);
@@ -105,6 +73,10 @@ class AccountForm
                             ->searchable()
                             ->nullable(),
 
+                        Forms\Components\Select::make('system_role')
+                            ->options(SystemRole::class)
+                            ->nullable(),
+                            
                         Forms\Components\TextInput::make('currency_code')
                             ->label('Currency')
                             ->default(fn () => \Tek2991\Accounting\Facades\Accounting::getCurrency())
@@ -119,6 +91,11 @@ class AccountForm
                 Section::make('Status')
                     ->columns(2)
                     ->components([
+                        Forms\Components\Toggle::make('is_control_account')
+                            ->label('Is Control Account')
+                            ->default(false)
+                            ->helperText('Control accounts do not allow manual journal entries.'),
+                            
                         Forms\Components\Toggle::make('archived')
                             ->label('Archived')
                             ->default(false),

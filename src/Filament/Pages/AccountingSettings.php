@@ -67,7 +67,17 @@ class AccountingSettings extends Page implements HasForms
                             ->label('Default Currency')
                             ->options($this->getCurrencyOptions())
                             ->searchable()
-                            ->required(),
+                            ->required()
+                            ->disabled(function () {
+                                $companyId = app(\Tek2991\Accounting\Contracts\CompanyAccessor::class)->getCurrentCompanyId();
+                                return \Tek2991\Accounting\Models\Transaction::where('company_id', $companyId)->exists();
+                            })
+                            ->helperText(function () {
+                                $companyId = app(\Tek2991\Accounting\Contracts\CompanyAccessor::class)->getCurrentCompanyId();
+                                return \Tek2991\Accounting\Models\Transaction::where('company_id', $companyId)->exists() 
+                                    ? 'Currency cannot be changed after transactions have been posted to prevent reporting inconsistencies.' 
+                                    : 'Base currency for all accounting reports.';
+                            }),
                     ]),
                 Section::make('Company Profile')
                     ->description('Your company details for invoices and bills.')

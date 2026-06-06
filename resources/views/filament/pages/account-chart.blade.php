@@ -21,28 +21,30 @@
         @endforeach
     </div>
 
-    {{-- Account Subtypes & Accounts --}}
+    {{-- Reporting Classes & Accounts --}}
     <div class="space-y-4">
-        @forelse ($this->accountsBySubtype as $subtype)
+        @forelse ($this->accountsByReportingClass as $className => $accounts)
             <x-filament::section>
                 <x-slot name="heading">
                     <div class="flex items-center justify-between w-full">
                         <div>
-                            <span class="font-semibold text-gray-900 dark:text-white">{{ $subtype->name }}</span>
+                            <span class="font-semibold text-gray-900 dark:text-white">{{ $className }}</span>
                             <span class="ml-2 text-xs text-gray-500 dark:text-gray-400 font-normal">
-                                {{ $subtype->accounts_count }} {{ Str::plural('account', $subtype->accounts_count) }}
+                                {{ $accounts->count() }} {{ Str::plural('account', $accounts->count()) }}
                             </span>
                         </div>
-                        {{ ($this->createAccountForSubtypeAction)(['subtypeId' => $subtype->id]) }}
+                        {{ ($this->createAccountForClassAction)(['className' => $className]) }}
                     </div>
                 </x-slot>
 
-                @if ($subtype->accounts->isNotEmpty())
+                @if ($accounts->isNotEmpty())
                     <div class="divide-y divide-gray-100 dark:divide-white/5 -mx-6 -mb-6">
-                        @foreach ($subtype->accounts as $account)
+                        @foreach ($accounts as $account)
                             <div @class([
                                 'flex items-center justify-between px-6 py-3 group hover:bg-gray-50 dark:hover:bg-white/5 transition-colors',
                                 'opacity-60' => $account->archived,
+                                'pl-10' => $account->parent_id,
+                                'pl-14' => $account->parent && $account->parent->parent_id,
                             ])>
                                 {{-- Left: code + name --}}
                                 <div class="flex items-center gap-3 min-w-0">
@@ -57,6 +59,9 @@
                                     @endif
                                     @if ($account->default)
                                         <x-filament::badge color="primary" size="sm">Default</x-filament::badge>
+                                    @endif
+                                    @if ($account->is_control_account)
+                                        <x-filament::badge color="gray" size="sm">Control</x-filament::badge>
                                     @endif
                                 </div>
 
@@ -81,7 +86,7 @@
                     </div>
                 @else
                     <p class="text-sm text-gray-400 dark:text-gray-500 italic py-2">
-                        No accounts in this subtype yet.
+                        No accounts in this reporting class yet.
                     </p>
                 @endif
             </x-filament::section>

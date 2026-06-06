@@ -11,6 +11,7 @@ class BillItem extends Model
 {
     protected $fillable = [
         'bill_id',
+        'line_type',
         'item_id',
         'sort_order',
         'description',
@@ -25,9 +26,14 @@ class BillItem extends Model
         'tax_snapshot',
         'tax_amount',
         'expense_account_id',
+        'gross_amount',
+        'line_discount_amount',
+        'allocated_document_discount',
+        'net_amount',
     ];
 
     protected $casts = [
+        'line_type' => \Tek2991\Accounting\Enums\DocumentLineType::class,
         'quantity' => 'decimal:4',
         'discount_rate' => 'decimal:4',
         'discount_type' => DiscountType::class,
@@ -44,6 +50,10 @@ class BillItem extends Model
     protected function discountAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
     protected function lineTotal(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
     protected function taxAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
+    protected function grossAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
+    protected function lineDiscountAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
+    protected function allocatedDocumentDiscount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
+    protected function netAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
 
     // Relationships
     public function bill(): BelongsTo { return $this->belongsTo(Bill::class, 'bill_id'); }

@@ -37,19 +37,7 @@ class Invoice extends Model
         'issue_date',
         'due_date',
         'currency_code',
-        'exchange_rate',
-        'billing_address_snapshot',
-        'notes',
-        'terms',
-        'subtotal',
-        'discount_type',
         'discount_rate',
-        'discount_amount',
-        'tax_total',
-        'grand_total',
-        'amount_paid',
-        'balance_due',
-        'default_income_account_id',
     ];
 
     protected $casts = [
@@ -67,6 +55,11 @@ class Invoice extends Model
         return config('accounting.table_prefix', 'acc_') . 'invoices';
     }
 
+    public function discountAccount(): BelongsTo
+    {
+        return $this->belongsTo(Account::class, 'discount_account_id');
+    }
+
     // Amount Accessors/Mutators (Minor Units)
     protected function subtotal(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
     protected function discountAmount(): Attribute { return Attribute::make(get: fn ($v) => $v !== null ? $v / 100 : 0, set: fn ($v) => (int) round($v * 100)); }
@@ -78,7 +71,6 @@ class Invoice extends Model
     // Relationships
     public function contact(): BelongsTo { return $this->belongsTo(Contact::class, 'contact_id'); }
     public function transaction(): BelongsTo { return $this->belongsTo(Transaction::class, 'transaction_id'); }
-    public function defaultIncomeAccount(): BelongsTo { return $this->belongsTo(Account::class, 'default_income_account_id'); }
     public function items(): HasMany { return $this->hasMany(InvoiceItem::class, 'invoice_id')->orderBy('sort_order'); }
     public function payments(): MorphMany { return $this->morphMany(Payment::class, 'paymentable'); }
 

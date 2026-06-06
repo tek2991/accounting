@@ -34,7 +34,12 @@ class DebitNoteService
         $taxTotal = 0;
 
         foreach ($dn->items as $item) {
-            $baseLineTotal = $item->getRawOriginal('quantity') * $item->getRawOriginal('unit_price');
+            // Line total = qty * unit_price
+            $qty = $item->getRawOriginal('quantity');
+            if (empty($qty) || $qty == 0) {
+                $qty = 1;
+            }
+            $baseLineTotal = $qty * $item->getRawOriginal('unit_price');
             
             // Calculate Tax
             $itemTaxAmount = 0;
@@ -44,7 +49,7 @@ class DebitNoteService
                 $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
                 if ($tax) {
                     $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
-                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax);
+                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax, null, 'purchase');
                     $itemTaxAmount = $taxComponents->sum('amount');
                     $item->tax_snapshot = $taxComponents->toArray();
                 }
@@ -52,6 +57,11 @@ class DebitNoteService
             
             // Determine item's pre-tax line total
             $itemPreTaxTotal = $isInclusive ? ($baseLineTotal - $itemTaxAmount) : $baseLineTotal;
+            
+            $item->gross_amount = $baseLineTotal / 100;
+            $item->line_discount_amount = 0;
+            $item->allocated_document_discount = 0;
+            $item->net_amount = $baseLineTotal / 100;
             
             $item->line_total = $itemPreTaxTotal / 100;
             $item->tax_amount = $itemTaxAmount / 100;
@@ -87,10 +97,8 @@ class DebitNoteService
                 throw new Exception("Only draft debit notes can be posted.");
             }
 
-            $payableAccountId = $dn->contact->payable_account_id ?? \Tek2991\Accounting\Models\Account::where('company_id', $dn->company_id)
-                ->where('category', \Tek2991\Accounting\Enums\AccountCategory::Liability)
-                ->where('default', true)
-                ->where('name', 'Accounts Payable')
+            $payableAccountId = $dn->contact->payableAccount?->id ?? \Tek2991\Accounting\Models\Account::where('company_id', $dn->company_id)
+                ->where('system_role', \Tek2991\Accounting\Enums\SystemRole::TradePayable)
                 ->value('id');
 
             if (!$payableAccountId) {
@@ -103,7 +111,7 @@ class DebitNoteService
             $entries[] = [
                 'account_id' => $payableAccountId,
                 'type' => 'debit',
-                'amount' => $dn->getRawOriginal('grand_total'),
+                'amount' => $dn->grand_total,
                 'description' => "Debit Note {$dn->debit_note_number}",
             ];
 
@@ -112,7 +120,7 @@ class DebitNoteService
             $taxAccounts = [];
 
             foreach ($dn->items as $item) {
-                $expAccountId = $item->item->expense_account_id ?? $dn->bill?->default_expense_account_id;
+                $expAccountId = $item->item->expense_account_id ?? null;
                 if (!$expAccountId) {
                     throw new Exception("Missing expense account for item.");
                 }
@@ -120,7 +128,7 @@ class DebitNoteService
                 if (!isset($expenseAccounts[$expAccountId])) {
                     $expenseAccounts[$expAccountId] = 0;
                 }
-                $expenseAccounts[$expAccountId] += $item->getRawOriginal('line_total');
+                $expenseAccounts[$expAccountId] += $item->line_total;
 
                 if ($item->tax_snapshot) {
                     foreach ($item->tax_snapshot as $taxComp) {
@@ -128,7 +136,7 @@ class DebitNoteService
                         if (!isset($taxAccounts[$taxAccId])) {
                             $taxAccounts[$taxAccId] = 0;
                         }
-                        $taxAccounts[$taxAccId] += $taxComp['amount'];
+                        $taxAccounts[$taxAccId] += ($taxComp['amount'] / 100);
                     }
                 }
             }
@@ -172,7 +180,7 @@ class DebitNoteService
                 ->event('debit_note.posted')
                 ->withProperties([
                     'transaction_id' => $transaction->id,
-                    'grand_total' => $dn->getRawOriginal('grand_total')
+                    'grand_total' => $dn->grand_total
                 ])
                 ->log("Debit Note {$dn->debit_note_number} posted");
         });

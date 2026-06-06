@@ -9,8 +9,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Tek2991\Accounting\Concerns\Blamable;
 use Tek2991\Accounting\Concerns\CompanyOwned;
-use Tek2991\Accounting\Enums\AccountCategory;
 use Tek2991\Accounting\Enums\AccountType;
+use Tek2991\Accounting\Enums\ReportingClass;
+use Tek2991\Accounting\Enums\SystemRole;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
 
@@ -23,7 +24,7 @@ class Account extends Model
     public function getActivitylogOptions(): LogOptions
     {
         return LogOptions::defaults()
-            ->logOnly(['name', 'code', 'archived', 'type', 'category'])
+            ->logOnly(['name', 'code', 'archived', 'type', 'reporting_class', 'system_role', 'is_control_account'])
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs()
             ->useLogName('accounting');
@@ -31,10 +32,12 @@ class Account extends Model
 
     protected $fillable = [
         'company_id',
-        'subtype_id',
         'parent_id',
-        'category',
+        'contact_id',
         'type',
+        'reporting_class',
+        'system_role',
+        'is_control_account',
         'code',
         'name',
         'currency_code',
@@ -46,8 +49,10 @@ class Account extends Model
     ];
 
     protected $casts = [
-        'category' => AccountCategory::class,
         'type' => AccountType::class,
+        'reporting_class' => ReportingClass::class,
+        'system_role' => SystemRole::class,
+        'is_control_account' => 'boolean',
         'archived' => 'boolean',
         'default' => 'boolean',
     ];
@@ -61,11 +66,6 @@ class Account extends Model
     // Relationships
     // ──────────────────────────────────────────────────────────────
 
-    public function subtype(): BelongsTo
-    {
-        return $this->belongsTo(AccountSubtype::class, 'subtype_id');
-    }
-
     public function parent(): BelongsTo
     {
         return $this->belongsTo(self::class, 'parent_id');
@@ -74,6 +74,11 @@ class Account extends Model
     public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_id');
+    }
+
+    public function contact(): BelongsTo
+    {
+        return $this->belongsTo(Contact::class, 'contact_id');
     }
 
     public function journalEntries(): HasMany
@@ -109,15 +114,25 @@ class Account extends Model
         return $query->where('archived', true);
     }
 
+    public function scopeControlAccounts(Builder $query): Builder
+    {
+        return $query->where('is_control_account', true);
+    }
+
+    public function scopePostable(Builder $query): Builder
+    {
+        return $query->where('is_control_account', false)->doesntHave('children');
+    }
+
     /**
      * Scope to accounts eligible to be linked to a bank account.
      * Only Asset and Liability categories qualify.
      */
     public function scopeForBankAccounts(Builder $query): Builder
     {
-        return $query->whereIn('category', [
-            AccountCategory::Asset,
-            AccountCategory::Liability,
+        return $query->whereIn('type', [
+            AccountType::Asset,
+            AccountType::Liability,
         ]);
     }
 
@@ -137,14 +152,19 @@ class Account extends Model
         return $query->doesntHave('bankAccount');
     }
 
-    public function scopeOfCategory(Builder $query, AccountCategory $category): Builder
-    {
-        return $query->where('category', $category);
-    }
-
     public function scopeOfType(Builder $query, AccountType $type): Builder
     {
         return $query->where('type', $type);
+    }
+
+    public function scopeOfReportingClass(Builder $query, ReportingClass $reportingClass): Builder
+    {
+        return $query->where('reporting_class', $reportingClass);
+    }
+
+    public function scopeOfSystemRole(Builder $query, SystemRole $systemRole): Builder
+    {
+        return $query->where('system_role', $systemRole);
     }
 
     public function scopeDefault(Builder $query): Builder
@@ -157,10 +177,10 @@ class Account extends Model
      */
     public function scopeBalanceSheet(Builder $query): Builder
     {
-        return $query->whereIn('category', [
-            AccountCategory::Asset,
-            AccountCategory::Liability,
-            AccountCategory::Equity,
+        return $query->whereIn('type', [
+            AccountType::Asset,
+            AccountType::Liability,
+            AccountType::Equity,
         ]);
     }
 
@@ -169,9 +189,9 @@ class Account extends Model
      */
     public function scopeIncomeStatement(Builder $query): Builder
     {
-        return $query->whereIn('category', [
-            AccountCategory::Revenue,
-            AccountCategory::Expense,
+        return $query->whereIn('type', [
+            AccountType::Revenue,
+            AccountType::Expense,
         ]);
     }
 
@@ -184,7 +204,10 @@ class Account extends Model
      */
     public function getQualifiedNameAttribute(): string
     {
-        return "{$this->code} — {$this->name}";
+        if ($this->code) {
+            return "{$this->code} — {$this->name}";
+        }
+        return $this->name;
     }
 
     /**

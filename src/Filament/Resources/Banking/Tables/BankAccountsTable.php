@@ -14,13 +14,18 @@ class BankAccountsTable
     public static function configure(Table $table): Table
     {
         return $table
-            ->modifyQueryUsing(fn (Builder $query) => $query->with(['account', 'account.subtype']))
+            ->modifyQueryUsing(fn (Builder $query) => $query->with(['account']))
             ->columns([
                 Tables\Columns\TextColumn::make('account.name')
-                    ->label('Account Name')
+                    ->label('Chart Account')
                     ->searchable()
                     ->sortable()
-                    ->weight('bold')
+                    ->weight('bold'),
+                    
+                Tables\Columns\TextColumn::make('nickname')
+                    ->label('Nickname')
+                    ->searchable()
+                    ->sortable()
                     ->description(fn (BankAccount $record) => $record->mask),
 
                 Tables\Columns\TextColumn::make('type')
@@ -28,8 +33,9 @@ class BankAccountsTable
                     ->label('Type')
                     ->sortable(),
 
-                Tables\Columns\TextColumn::make('account.subtype.name')
-                    ->label('Subtype')
+                Tables\Columns\TextColumn::make('account.reporting_class')
+                    ->label('Reporting Class')
+                    ->badge()
                     ->sortable()
                     ->toggleable(),
 

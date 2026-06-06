@@ -12,7 +12,7 @@ class AccountingManager
 
     public function getCurrency(): string
     {
-        return $this->getSetting()->default_currency ?? config('accounting.default_currency', 'USD');
+        return $this->getSetting()->default_currency ?? config('accounting.default_currency', 'INR');
     }
 
     public function getFiscalYearStart(): int
@@ -34,14 +34,14 @@ class AccountingManager
             $this->cachedSetting = Setting::firstOrCreate(
                 ['company_id' => $companyId],
                 [
-                    'default_currency' => config('accounting.default_currency', 'USD'),
+                    'default_currency' => config('accounting.default_currency', 'INR'),
                     'fiscal_year_start' => config('accounting.fiscal_year_start', 1),
                 ]
             );
         } else {
             // Fallback for missing company
             $this->cachedSetting = new Setting([
-                'default_currency' => config('accounting.default_currency', 'USD'),
+                'default_currency' => config('accounting.default_currency', 'INR'),
                 'fiscal_year_start' => config('accounting.fiscal_year_start', 1),
             ]);
         }

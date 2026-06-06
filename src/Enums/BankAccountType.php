@@ -48,47 +48,32 @@ enum BankAccountType: string implements HasLabel, HasColor, HasIcon
     }
 
     /**
-     * The AccountCategory this bank account type belongs to.
+     * The AccountType this bank account type belongs to.
      * Depository and Investment are Asset accounts.
      * Credit and Loan are Liability accounts.
      */
-    public function getAccountCategory(): AccountCategory
+    public function getAccountType(): AccountType
     {
         return match ($this) {
-            self::Depository, self::Investment => AccountCategory::Asset,
-            self::Credit, self::Loan           => AccountCategory::Liability,
-            self::Other                        => AccountCategory::Asset,
+            self::Depository, self::Investment => AccountType::Asset,
+            self::Credit, self::Loan           => AccountType::Liability,
+            self::Other                        => AccountType::Asset,
         };
     }
 
     /**
-     * The default AccountSubtype name for this bank account type.
-     * Used when seeding or auto-selecting a subtype.
-     */
-    public function getDefaultSubtype(): string
-    {
-        return match ($this) {
-            self::Depository => 'Cash and Cash Equivalents',
-            self::Credit     => 'Accounts Payable',
-            self::Investment => 'Intangible Assets',
-            self::Loan       => 'Long-Term Debt',
-            self::Other      => 'Cash and Cash Equivalents',
-        };
-    }
-
-    /**
-     * Get the AccountType values valid for this BankAccountType.
+     * Get the ReportingClass values valid for this BankAccountType.
      *
-     * @return AccountType[]
+     * @return ReportingClass[]
      */
-    public function getValidAccountTypes(): array
+    public function getValidReportingClasses(): array
     {
         return match ($this) {
-            self::Depository => [AccountType::CurrentAsset],
-            self::Investment => [AccountType::NonCurrentAsset],
-            self::Credit     => [AccountType::CurrentLiability],
-            self::Loan       => [AccountType::NonCurrentLiability],
-            self::Other      => [AccountType::CurrentAsset, AccountType::NonCurrentAsset],
+            self::Depository => [ReportingClass::CurrentAsset],
+            self::Investment => [ReportingClass::FixedAsset, ReportingClass::OtherAsset],
+            self::Credit     => [ReportingClass::CurrentLiability],
+            self::Loan       => [ReportingClass::LongTermLiability],
+            self::Other      => [ReportingClass::CurrentAsset, ReportingClass::OtherAsset],
         };
     }
 }

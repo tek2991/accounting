@@ -46,6 +46,7 @@ class AccountingServiceProvider extends PackageServiceProvider
                 'create_credit_note_items_table',
                 'create_debit_notes_table',
                 'create_debit_note_items_table',
+                'add_discount_fields_to_items_tables',
             ])
             ->hasViews('accounting')
             ->hasTranslations();
@@ -117,6 +118,6 @@ class AccountingServiceProvider extends PackageServiceProvider
 
     public function packageBooted(): void
     {
-        //
+        \Tek2991\Accounting\Models\Contact::observe(\Tek2991\Accounting\Observers\ContactObserver::class);
     }
 }

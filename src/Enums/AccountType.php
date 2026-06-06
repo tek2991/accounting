@@ -2,125 +2,140 @@
 
 namespace Tek2991\Accounting\Enums;
 
+use Filament\Support\Contracts\HasColor;
+use Filament\Support\Contracts\HasIcon;
 use Filament\Support\Contracts\HasLabel;
 
-enum AccountType: string implements HasLabel
+enum AccountType: string implements HasLabel, HasColor, HasIcon
 {
-    // Asset types
-    case CurrentAsset = 'current_asset';
-    case NonCurrentAsset = 'non_current_asset';
-    case ContraAsset = 'contra_asset';
-
-    // Liability types
-    case CurrentLiability = 'current_liability';
-    case NonCurrentLiability = 'non_current_liability';
-    case ContraLiability = 'contra_liability';
-
-    // Equity types
+    case Asset = 'asset';
+    case Liability = 'liability';
     case Equity = 'equity';
-    case ContraEquity = 'contra_equity';
-
-    // Revenue types
-    case OperatingRevenue = 'operating_revenue';
-    case NonOperatingRevenue = 'non_operating_revenue';
-    case ContraRevenue = 'contra_revenue';
-
-    // Expense types
-    case OperatingExpense = 'operating_expense';
-    case NonOperatingExpense = 'non_operating_expense';
-    case ContraExpense = 'contra_expense';
+    case Revenue = 'revenue';
+    case Expense = 'expense';
 
     public function getLabel(): ?string
     {
+        return $this->name;
+    }
+
+    public function getPluralLabel(): string
+    {
         return match ($this) {
-            self::CurrentAsset => 'Current Asset',
-            self::NonCurrentAsset => 'Non-Current Asset',
-            self::ContraAsset => 'Contra Asset',
-            self::CurrentLiability => 'Current Liability',
-            self::NonCurrentLiability => 'Non-Current Liability',
-            self::ContraLiability => 'Contra Liability',
+            self::Asset => 'Assets',
+            self::Liability => 'Liabilities',
             self::Equity => 'Equity',
-            self::ContraEquity => 'Contra Equity',
-            self::OperatingRevenue => 'Operating Revenue',
-            self::NonOperatingRevenue => 'Non-Operating Revenue',
-            self::ContraRevenue => 'Contra Revenue',
-            self::OperatingExpense => 'Operating Expense',
-            self::NonOperatingExpense => 'Non-Operating Expense',
-            self::ContraExpense => 'Contra Expense',
+            self::Revenue => 'Revenue',
+            self::Expense => 'Expenses',
         };
     }
 
-    /**
-     * Get the parent category for this account type.
-     */
-    public function getCategory(): AccountCategory
+    public function getColor(): string | array | null
     {
         return match ($this) {
-            self::CurrentAsset, self::NonCurrentAsset, self::ContraAsset => AccountCategory::Asset,
-            self::CurrentLiability, self::NonCurrentLiability, self::ContraLiability => AccountCategory::Liability,
-            self::Equity, self::ContraEquity => AccountCategory::Equity,
-            self::OperatingRevenue, self::NonOperatingRevenue, self::ContraRevenue => AccountCategory::Revenue,
-            self::OperatingExpense, self::NonOperatingExpense, self::ContraExpense => AccountCategory::Expense,
+            self::Asset => 'info',
+            self::Liability => 'danger',
+            self::Equity => 'success',
+            self::Revenue => 'primary',
+            self::Expense => 'warning',
+        };
+    }
+
+    public function getIcon(): ?string
+    {
+        return match ($this) {
+            self::Asset => 'heroicon-o-building-library',
+            self::Liability => 'heroicon-o-scale',
+            self::Equity => 'heroicon-o-shield-check',
+            self::Revenue => 'heroicon-o-arrow-trending-up',
+            self::Expense => 'heroicon-o-arrow-trending-down',
         };
     }
 
     /**
-     * Whether this is a contra account type.
-     * Contra accounts have the opposite natural balance of their category.
+     * Real accounts appear on the Balance Sheet (Asset, Liability, Equity).
+     * Their balances carry forward across periods.
      */
-    public function isContra(): bool
+    public function isReal(): bool
     {
-        return in_array($this, [
-            self::ContraAsset,
-            self::ContraLiability,
-            self::ContraEquity,
-            self::ContraRevenue,
-            self::ContraExpense,
-        ]);
+        return in_array($this, [self::Asset, self::Liability, self::Equity]);
     }
 
     /**
-     * Get the natural balance type, accounting for contra accounts.
+     * Nominal accounts appear on the Income Statement (Revenue, Expense).
+     * Their balances reset each period.
      */
-    public function getBalanceType(): JournalEntryType
+    public function isNominal(): bool
     {
-        $naturalBalance = $this->getCategory()->getDefaultBalanceType();
+        return in_array($this, [self::Revenue, self::Expense]);
+    }
 
-        if ($this->isContra()) {
-            return $naturalBalance === JournalEntryType::Debit
-                ? JournalEntryType::Credit
-                : JournalEntryType::Debit;
+    /**
+     * Determine the natural balance type for this category.
+     * Assets and Expenses are debit-normal.
+     * Liabilities, Equity, and Revenue are credit-normal.
+     */
+    public function getDefaultBalanceType(): JournalEntryType
+    {
+        return match ($this) {
+            self::Asset, self::Expense => JournalEntryType::Debit,
+            self::Liability, self::Equity, self::Revenue => JournalEntryType::Credit,
+        };
+    }
+
+    /**
+     * Calculate net movement based on this category's natural balance.
+     * For debit-normal accounts: debit - credit
+     * For credit-normal accounts: credit - debit
+     */
+    public function calculateNetMovement(int $totalDebit, int $totalCredit): int
+    {
+        return match ($this->getDefaultBalanceType()) {
+            JournalEntryType::Debit => $totalDebit - $totalCredit,
+            JournalEntryType::Credit => $totalCredit - $totalDebit,
+        };
+    }
+
+    /**
+     * Get the starting account code for this category.
+     */
+    public function getCodeRangeStart(): int
+    {
+        $ranges = config('accounting.account_code.ranges', []);
+
+        return $ranges[$this->value][0] ?? match ($this) {
+            self::Asset => 1000,
+            self::Liability => 2000,
+            self::Equity => 3000,
+            self::Revenue => 4000,
+            self::Expense => 5000,
+        };
+    }
+
+    /**
+     * Get the ending account code for this category.
+     */
+    public function getCodeRangeEnd(): int
+    {
+        $ranges = config('accounting.account_code.ranges', []);
+
+        return $ranges[$this->value][1] ?? match ($this) {
+            self::Asset => 1999,
+            self::Liability => 2999,
+            self::Equity => 3999,
+            self::Revenue => 4999,
+            self::Expense => 5999,
+        };
+    }
+
+    public static function fromPluralLabel(string $label): ?self
+    {
+        foreach (self::cases() as $case) {
+            if ($case->getPluralLabel() === $label) {
+                return $case;
+            }
         }
 
-        return $naturalBalance;
-    }
-
-    /**
-     * Get all types for a given category.
-     *
-     * @return array<self>
-     */
-    public static function forCategory(AccountCategory $category): array
-    {
-        return array_filter(
-            self::cases(),
-            fn (self $type) => $type->getCategory() === $category
-        );
-    }
-
-    /**
-     * Whether this type appears on the Balance Sheet.
-     */
-    public function isBalanceSheet(): bool
-    {
-        return $this->getCategory()->isReal();
-    }
-
-    /**
-     * Whether this type appears on the Income Statement.
-     */
-    public function isIncomeStatement(): bool
-    {
-        return $this->getCategory()->isNominal();
+        return null;
     }
 }

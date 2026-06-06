@@ -42,8 +42,13 @@ return new class extends Migration
             // Storing percentage as decimal. E.g. 9.0000
             $table->decimal('rate', 8, 4);
             
-            // Account to post the tax to (usually a Liability account)
-            $table->foreignId('account_id')
+            // Account to post the tax to on sales (usually a Liability account)
+            $table->foreignId('sales_account_id')
+                  ->constrained("{$prefix}accounts")
+                  ->restrictOnDelete();
+                  
+            // Account to post the tax to on purchases (usually an Asset/ITC account)
+            $table->foreignId('purchase_account_id')
                   ->constrained("{$prefix}accounts")
                   ->restrictOnDelete();
                   

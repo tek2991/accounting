@@ -5,7 +5,7 @@ namespace Tek2991\Accounting\Filament\Resources\Items\Schemas;
 use Filament\Forms;
 use Filament\Schemas\Schema;
 use Filament\Schemas\Components\Section;
-use Tek2991\Accounting\Enums\AccountCategory;
+use Tek2991\Accounting\Enums\AccountType;
 use Tek2991\Accounting\Enums\ItemType;
 
 class ItemForm
@@ -60,7 +60,7 @@ class ItemForm
                             
                         Forms\Components\Select::make('income_account_id')
                             ->label('Income Account')
-                            ->relationship('incomeAccount', 'name', fn ($query) => $query->where('category', AccountCategory::Revenue))
+                            ->relationship('incomeAccount', 'name', fn ($query) => $query->where('type', AccountType::Revenue))
                             ->searchable()
                             ->preload()
                             ->required(fn (\Filament\Schemas\Components\Utilities\Get $get) => $get('sellable'))
@@ -84,7 +84,7 @@ class ItemForm
                             
                         Forms\Components\Select::make('expense_account_id')
                             ->label('Expense / COGS Account')
-                            ->relationship('expenseAccount', 'name', fn ($query) => $query->where('category', AccountCategory::Expense))
+                            ->relationship('expenseAccount', 'name', fn ($query) => $query->where('type', AccountType::Expense))
                             ->searchable()
                             ->preload()
                             ->required(fn (\Filament\Schemas\Components\Utilities\Get $get) => $get('purchasable'))

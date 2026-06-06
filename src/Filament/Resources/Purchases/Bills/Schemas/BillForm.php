@@ -7,7 +7,7 @@ use Filament\Schemas\Schema;
 use Filament\Schemas\Components\Section;
 use Tek2991\Accounting\Models\Item;
 use Tek2991\Accounting\Models\Tax;
-use Tek2991\Accounting\Enums\AccountCategory;
+use Tek2991\Accounting\Enums\AccountType;
 
 class BillForm
 {
@@ -25,44 +25,92 @@ class BillForm
         $calculateTotals = function ($get) use ($getTaxType) {
             $grossSubtotal = 0;
             $totalItemDiscounts = 0;
-            $taxableAmount = 0;
-            $taxTotal = 0;
-            $netItemsTotal = 0;
+            $itemsData = [];
             
-            foreach ((array) $get('items') as $item) {
-                $qty = (float) ($item['quantity'] ?? 0);
+            foreach ((array) $get('items') as $index => $item) {
+                $qty = (float) ($item['quantity'] ?? 1);
                 $price = (float) ($item['unit_price'] ?? 0);
-                $baseLineTotal = $qty * $price;
-                $grossSubtotal += $baseLineTotal;
+                $gross = $qty * $price;
+                $grossSubtotal += $gross;
                 
                 $itemDiscount = 0;
                 if (($item['discount_type'] ?? 'percentage') === 'percentage') {
-                    $itemDiscount = $baseLineTotal * ((float) ($item['discount_rate'] ?? 0) / 100);
+                    $itemDiscount = $gross * ((float) ($item['discount_rate'] ?? 0) / 100);
                 } else {
                     $itemDiscount = (float) ($item['discount_amount'] ?? 0);
                 }
                 $totalItemDiscounts += $itemDiscount;
                 
-                $discountedLineTotal = $baseLineTotal - $itemDiscount;
+                $lineNetBeforeDoc = $gross - $itemDiscount;
+                
+                $itemsData[$index] = [
+                    'item' => $item,
+                    'lineNetBeforeDoc' => $lineNetBeforeDoc,
+                ];
+            }
+            
+            $preDocSubtotal = $grossSubtotal - $totalItemDiscounts;
+            $docDiscount = 0;
+            if (($get('discount_type') ?? 'percentage') === 'percentage') {
+                $docDiscount = $preDocSubtotal * ((float) ($get('discount_rate') ?? 0) / 100);
+            } else {
+                $docDiscount = (float) ($get('discount_amount') ?? 0);
+            }
+            
+            $remainingDocDiscount = $docDiscount;
+            $itemsCount = count($itemsData);
+            $i = 0;
+            
+            $taxableAmount = 0;
+            $taxTotal = 0;
+            $netItemsTotal = 0;
+            
+            foreach ($itemsData as $index => $data) {
+                $i++;
+                $item = $data['item'];
+                $lineNetBeforeDoc = $data['lineNetBeforeDoc'];
+                
+                $allocated = 0;
+                if ($itemsCount > 0) {
+                    if ($i === $itemsCount) {
+                        $allocated = $remainingDocDiscount;
+                    } else {
+                        $proportion = $preDocSubtotal > 0 ? ($lineNetBeforeDoc / $preDocSubtotal) : 0;
+                        $allocated = round($docDiscount * $proportion, 2);
+                        $remainingDocDiscount -= $allocated;
+                    }
+                }
+                
+                $taxableValue = $lineNetBeforeDoc - $allocated;
                 
                 $itemTaxAmount = 0;
                 $isInclusive = false;
                 $hasTax = false;
+                
                 if (!empty($item['tax_id'])) {
                     $hasTax = true;
-                    $isInclusive = $getTaxType($item['tax_id']) === 'inclusive';
-                    $rateSum = 0;
-                    foreach ($item['tax_snapshot'] ?? [] as $comp) {
-                        $rateSum += (float) ($comp['rate'] ?? 0);
-                    }
-                    if ($isInclusive) {
-                        $itemTaxAmount = $discountedLineTotal * ($rateSum / (100 + $rateSum));
+                    $docMode = $get('tax_computation_mode') ?? 'exclusive';
+                    
+                    if ($docMode === 'manual') {
+                        $isInclusive = false;
+                        foreach ($item['tax_snapshot'] ?? [] as $comp) {
+                            $itemTaxAmount += (float) ($comp['amount'] ?? 0);
+                        }
                     } else {
-                        $itemTaxAmount = $discountedLineTotal * ($rateSum / 100);
+                        $isInclusive = $docMode === 'inclusive';
+                        $rateSum = 0;
+                        foreach ($item['tax_snapshot'] ?? [] as $comp) {
+                            $rateSum += (float) ($comp['rate'] ?? 0);
+                        }
+                        if ($isInclusive) {
+                            $itemTaxAmount = $taxableValue * ($rateSum / (100 + $rateSum));
+                        } else {
+                            $itemTaxAmount = $taxableValue * ($rateSum / 100);
+                        }
                     }
                 }
                 
-                $itemPreTaxTotal = $isInclusive ? ($discountedLineTotal - $itemTaxAmount) : $discountedLineTotal;
+                $itemPreTaxTotal = $isInclusive ? ($taxableValue - $itemTaxAmount) : $taxableValue;
                 
                 if ($hasTax) {
                     $taxableAmount += $itemPreTaxTotal;
@@ -72,15 +120,8 @@ class BillForm
                 $taxTotal += $itemTaxAmount;
             }
             
-            $docDiscount = 0;
-            if (($get('discount_type') ?? 'percentage') === 'percentage') {
-                $docDiscount = $netItemsTotal * ((float) ($get('discount_rate') ?? 0) / 100);
-            } else {
-                $docDiscount = (float) ($get('discount_amount') ?? 0);
-            }
-            
             $totalDiscount = $totalItemDiscounts + $docDiscount;
-            $grandTotal = $netItemsTotal - $docDiscount + $taxTotal;
+            $grandTotal = $netItemsTotal + $taxTotal;
             
             return [
                 'subtotal' => $grossSubtotal,
@@ -97,6 +138,11 @@ class BillForm
                     ->columnSpan(1)
                     ->columns(2)
                     ->components([
+                        Forms\Components\Placeholder::make('status')
+                            ->content(fn ($record) => $record?->display_status ? strtoupper($record->display_status) : '')
+                            ->hidden(fn ($record) => !$record)
+                            ->extraAttributes(['class' => 'font-bold text-lg text-primary-600']),
+                            
                         Forms\Components\Select::make('contact_id')
                             ->label('Vendor')
                             ->relationship('contact', 'name', fn ($query) => $query->whereIn('type', [\Tek2991\Accounting\Enums\ContactType::Vendor, \Tek2991\Accounting\Enums\ContactType::Both]))
@@ -130,11 +176,15 @@ class BillForm
                             ->searchable()
                             ->required(),
                             
-                        Forms\Components\Select::make('default_expense_account_id')
-                            ->relationship('defaultExpenseAccount', 'name', fn ($query) => $query->where('category', AccountCategory::Expense))
-                            ->searchable()
-                            ->preload()
-                            ->required(),
+                        Forms\Components\Select::make('tax_computation_mode')
+                            ->options([
+                                'exclusive' => 'Auto - Tax Exclusive',
+                                'inclusive' => 'Auto - Tax Inclusive',
+                                'manual' => 'Manual Tax (Override)',
+                            ])
+                            ->default('exclusive')
+                            ->required()
+                            ->reactive(),
                             
                         Forms\Components\Select::make('discount_type')
                             ->options([
@@ -170,6 +220,7 @@ class BillForm
                                 $pct = $netItemsTotal > 0 ? ($amount / $netItemsTotal) * 100 : 0;
                                 return "Rate: " . number_format($pct, 2) . '%';
                             }),
+
 
                         Forms\Components\Textarea::make('notes')
                             ->columnSpanFull(),
@@ -213,12 +264,32 @@ class BillForm
                             ->relationship()
                             ->columns(12)
                             ->schema([
+                                Forms\Components\ToggleButtons::make('line_type')
+                                    ->options([
+                                        'item' => 'Item',
+                                        'account' => 'Account',
+                                    ])
+                                    ->default('item')
+                                    ->inline()
+                                    ->reactive()
+                                    ->required()
+                                    ->columnSpanFull()
+                                    ->afterStateUpdated(function (callable $set) {
+                                        $set('item_id', null);
+                                        $set('expense_account_id', null);
+                                        $set('description', null);
+                                        $set('quantity', 1);
+                                        $set('unit_price', null);
+                                    }),
+                                    
                                 Forms\Components\Select::make('item_id')
                                     ->relationship('item', 'name')
                                     ->searchable()
                                     ->preload()
                                     ->columnSpan(3)
                                     ->reactive()
+                                    ->visible(fn ($get) => $get('line_type') === 'item')
+                                    ->required(fn ($get) => $get('line_type') === 'item')
                                     ->afterStateUpdated(function ($state, callable $set) {
                                         if ($state) {
                                             $item = Item::find($state);
@@ -230,6 +301,15 @@ class BillForm
                                         }
                                     }),
                                     
+                                Forms\Components\Select::make('expense_account_id')
+                                    ->relationship('expenseAccount', 'name', fn ($query) => $query->where('type', \Tek2991\Accounting\Enums\AccountType::Expense))
+                                    ->searchable()
+                                    ->preload()
+                                    ->columnSpan(3)
+                                    ->reactive()
+                                    ->visible(fn ($get) => $get('line_type') === 'account')
+                                    ->required(fn ($get) => $get('line_type') === 'account'),
+                                    
                                 Forms\Components\TextInput::make('description')
                                     ->required()
                                     ->columnSpan(3),
@@ -239,9 +319,11 @@ class BillForm
                                     ->default(1)
                                     ->required()
                                     ->reactive()
-                                    ->columnSpan(1),
+                                    ->columnSpan(1)
+                                    ->visible(fn ($get) => $get('line_type') === 'item'),
                                     
                                 Forms\Components\TextInput::make('unit_price')
+                                    ->label(fn ($get) => $get('line_type') === 'account' ? 'Amount' : 'Unit Price')
                                     ->numeric()
                                     ->required()
                                     ->reactive()
@@ -261,14 +343,39 @@ class BillForm
                                                     'account_id' => $c->account_id,
                                                     'name' => $c->name,
                                                     'rate' => $c->rate,
-                                                    'amount' => 0,
+                                                    'amount' => 0, // minor units
                                                 ])->toArray();
                                                 $set('tax_snapshot', $components);
                                             }
                                         }
                                     }),
                                     
-                                Forms\Components\Hidden::make('tax_snapshot'),
+                                Forms\Components\Repeater::make('tax_snapshot')
+                                    ->schema([
+                                        Forms\Components\Hidden::make('account_id'),
+                                        Forms\Components\Hidden::make('rate'),
+                                        Forms\Components\TextInput::make('name')
+                                            ->disabled()
+                                            ->dehydrated(true)
+                                            ->columnSpan(2),
+                                        Forms\Components\TextInput::make('amount')
+                                            ->numeric()
+                                            ->required()
+                                            ->reactive()
+                                            ->dehydrateStateUsing(fn ($state) => (int) round(((float) $state) * 100))
+                                            ->formatStateUsing(fn ($state) => $state !== null ? number_format((float) $state / 100, 2, '.', '') : '0.00')
+                                            ->columnSpan(2),
+                                    ])
+                                    ->columns(4)
+                                    ->addable(false)
+                                    ->deletable(false)
+                                    ->reorderable(false)
+                                    ->visible(fn ($get) => $get('../../tax_computation_mode') === 'manual')
+                                    ->columnSpanFull()
+                                    ->dehydrated(fn ($get) => $get('../../tax_computation_mode') === 'manual'),
+                                    
+                                Forms\Components\Hidden::make('tax_snapshot_hidden')
+                                    ->dehydrated(false),
                                     
                                 Forms\Components\Placeholder::make('line_total')
                                     ->content(function ($get) use ($getTaxType) {
@@ -288,13 +395,19 @@ class BillForm
                                         $itemTaxAmount = 0;
                                         $isInclusive = false;
                                         if (!empty($get('tax_id'))) {
-                                            $isInclusive = $getTaxType($get('tax_id')) === 'inclusive';
-                                            $rateSum = 0;
-                                            foreach ($get('tax_snapshot') ?? [] as $comp) {
-                                                $rateSum += (float) ($comp['rate'] ?? 0);
-                                            }
-                                            if ($isInclusive) {
-                                                $itemTaxAmount = $discountedLineTotal * ($rateSum / (100 + $rateSum));
+                                            $docMode = $get('../../tax_computation_mode') ?? 'exclusive';
+                                            
+                                            if ($docMode === 'manual') {
+                                                // Pre-tax is just discounted line total
+                                            } else {
+                                                $isInclusive = $docMode === 'inclusive';
+                                                $rateSum = 0;
+                                                foreach ($get('tax_snapshot') ?? [] as $comp) {
+                                                    $rateSum += (float) ($comp['rate'] ?? 0);
+                                                }
+                                                if ($isInclusive) {
+                                                    $itemTaxAmount = $discountedLineTotal * ($rateSum / (100 + $rateSum));
+                                                }
                                             }
                                         }
                                         

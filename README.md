@@ -26,6 +26,7 @@ composer require tek2991/accounting
 Publish the package migrations and migrate your database:
 
 ```bash
+php artisan vendor:publish --provider="Spatie\Activitylog\ActivitylogServiceProvider" --tag="activitylog-migrations"
 php artisan vendor:publish --tag="accounting-migrations"
 php artisan migrate
 ```

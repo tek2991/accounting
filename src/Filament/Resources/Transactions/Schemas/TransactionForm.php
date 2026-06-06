@@ -20,7 +20,7 @@ class TransactionForm
                 Forms\Components\Repeater::make('journalEntries')
                     ->schema([
                         Forms\Components\Select::make('account_id')
-                            ->options(fn() => Account::pluck('name', 'id'))
+                            ->options(fn() => Account::postable()->pluck('name', 'id'))
                             ->searchable()
                             ->required()
                             ->columnSpan(2),

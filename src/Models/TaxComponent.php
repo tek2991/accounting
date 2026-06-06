@@ -27,7 +27,8 @@ class TaxComponent extends Model
         'tax_id',
         'name',
         'rate',
-        'account_id',
+        'sales_account_id',
+        'purchase_account_id',
     ];
 
     protected $casts = [
@@ -44,8 +45,13 @@ class TaxComponent extends Model
         return $this->belongsTo(Tax::class, 'tax_id');
     }
 
-    public function account(): BelongsTo
+    public function salesAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'account_id');
+        return $this->belongsTo(Account::class, 'sales_account_id');
+    }
+
+    public function purchaseAccount(): BelongsTo
+    {
+        return $this->belongsTo(Account::class, 'purchase_account_id');
     }
 }

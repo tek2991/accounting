@@ -4,6 +4,8 @@ namespace Tek2991\Accounting\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Tek2991\Accounting\Concerns\CompanyOwned;
 use Tek2991\Accounting\Enums\ContactType;
@@ -72,5 +74,22 @@ class Contact extends Model
     public function isVendor(): bool
     {
         return in_array($this->type, [ContactType::Vendor, ContactType::Both]);
+    }
+
+    public function accounts(): HasMany
+    {
+        return $this->hasMany(Account::class, 'contact_id');
+    }
+
+    public function receivableAccount(): HasOne
+    {
+        return $this->hasOne(Account::class, 'contact_id')
+            ->where('system_role', \Tek2991\Accounting\Enums\SystemRole::CustomerReceivable);
+    }
+
+    public function payableAccount(): HasOne
+    {
+        return $this->hasOne(Account::class, 'contact_id')
+            ->where('system_role', \Tek2991\Accounting\Enums\SystemRole::VendorPayable);
     }
 }

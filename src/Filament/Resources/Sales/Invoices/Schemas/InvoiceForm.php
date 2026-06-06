@@ -8,7 +8,7 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Grid;
 use Tek2991\Accounting\Models\Item;
 use Tek2991\Accounting\Models\Tax;
-use Tek2991\Accounting\Enums\AccountCategory;
+use Tek2991\Accounting\Enums\AccountType;
 
 class InvoiceForm
 {
@@ -26,29 +26,68 @@ class InvoiceForm
         $calculateTotals = function ($get) use ($getTaxType) {
             $grossSubtotal = 0;
             $totalItemDiscounts = 0;
-            $taxableAmount = 0;
-            $taxTotal = 0;
-            $netItemsTotal = 0;
+            $itemsData = [];
             
-            foreach ((array) $get('items') as $item) {
-                $qty = (float) ($item['quantity'] ?? 0);
+            foreach ((array) $get('items') as $index => $item) {
+                $qty = (float) ($item['quantity'] ?? 1);
                 $price = (float) ($item['unit_price'] ?? 0);
-                $baseLineTotal = $qty * $price;
-                $grossSubtotal += $baseLineTotal;
+                $gross = $qty * $price;
+                $grossSubtotal += $gross;
                 
                 $itemDiscount = 0;
                 if (($item['discount_type'] ?? 'percentage') === 'percentage') {
-                    $itemDiscount = $baseLineTotal * ((float) ($item['discount_rate'] ?? 0) / 100);
+                    $itemDiscount = $gross * ((float) ($item['discount_rate'] ?? 0) / 100);
                 } else {
                     $itemDiscount = (float) ($item['discount_amount'] ?? 0);
                 }
                 $totalItemDiscounts += $itemDiscount;
                 
-                $discountedLineTotal = $baseLineTotal - $itemDiscount;
+                $lineNetBeforeDoc = $gross - $itemDiscount;
+                
+                $itemsData[$index] = [
+                    'item' => $item,
+                    'lineNetBeforeDoc' => $lineNetBeforeDoc,
+                ];
+            }
+            
+            $preDocSubtotal = $grossSubtotal - $totalItemDiscounts;
+            $docDiscount = 0;
+            if (($get('discount_type') ?? 'percentage') === 'percentage') {
+                $docDiscount = $preDocSubtotal * ((float) ($get('discount_rate') ?? 0) / 100);
+            } else {
+                $docDiscount = (float) ($get('discount_amount') ?? 0);
+            }
+            
+            $remainingDocDiscount = $docDiscount;
+            $itemsCount = count($itemsData);
+            $i = 0;
+            
+            $taxableAmount = 0;
+            $taxTotal = 0;
+            $netItemsTotal = 0;
+            
+            foreach ($itemsData as $index => $data) {
+                $i++;
+                $item = $data['item'];
+                $lineNetBeforeDoc = $data['lineNetBeforeDoc'];
+                
+                $allocated = 0;
+                if ($itemsCount > 0) {
+                    if ($i === $itemsCount) {
+                        $allocated = $remainingDocDiscount;
+                    } else {
+                        $proportion = $preDocSubtotal > 0 ? ($lineNetBeforeDoc / $preDocSubtotal) : 0;
+                        $allocated = round($docDiscount * $proportion, 2);
+                        $remainingDocDiscount -= $allocated;
+                    }
+                }
+                
+                $taxableValue = $lineNetBeforeDoc - $allocated;
                 
                 $itemTaxAmount = 0;
                 $isInclusive = false;
                 $hasTax = false;
+                
                 if (!empty($item['tax_id'])) {
                     $hasTax = true;
                     $isInclusive = $getTaxType($item['tax_id']) === 'inclusive';
@@ -57,13 +96,13 @@ class InvoiceForm
                         $rateSum += (float) ($comp['rate'] ?? 0);
                     }
                     if ($isInclusive) {
-                        $itemTaxAmount = $discountedLineTotal * ($rateSum / (100 + $rateSum));
+                        $itemTaxAmount = $taxableValue * ($rateSum / (100 + $rateSum));
                     } else {
-                        $itemTaxAmount = $discountedLineTotal * ($rateSum / 100);
+                        $itemTaxAmount = $taxableValue * ($rateSum / 100);
                     }
                 }
                 
-                $itemPreTaxTotal = $isInclusive ? ($discountedLineTotal - $itemTaxAmount) : $discountedLineTotal;
+                $itemPreTaxTotal = $isInclusive ? ($taxableValue - $itemTaxAmount) : $taxableValue;
                 
                 if ($hasTax) {
                     $taxableAmount += $itemPreTaxTotal;
@@ -73,15 +112,8 @@ class InvoiceForm
                 $taxTotal += $itemTaxAmount;
             }
             
-            $docDiscount = 0;
-            if (($get('discount_type') ?? 'percentage') === 'percentage') {
-                $docDiscount = $netItemsTotal * ((float) ($get('discount_rate') ?? 0) / 100);
-            } else {
-                $docDiscount = (float) ($get('discount_amount') ?? 0);
-            }
-            
             $totalDiscount = $totalItemDiscounts + $docDiscount;
-            $grandTotal = $netItemsTotal - $docDiscount + $taxTotal;
+            $grandTotal = $netItemsTotal + $taxTotal;
             
             return [
                 'subtotal' => $grossSubtotal,
@@ -98,6 +130,11 @@ class InvoiceForm
                     ->columnSpan(1)
                     ->columns(2)
                     ->components([
+                        Forms\Components\Placeholder::make('status')
+                            ->content(fn ($record) => $record?->display_status ? strtoupper($record->display_status) : '')
+                            ->hidden(fn ($record) => !$record)
+                            ->extraAttributes(['class' => 'font-bold text-lg text-primary-600']),
+                            
                         Forms\Components\Select::make('contact_id')
                             ->label('Customer')
                             ->relationship('contact', 'name', fn ($query) => $query->whereIn('type', [\Tek2991\Accounting\Enums\ContactType::Customer, \Tek2991\Accounting\Enums\ContactType::Both]))
@@ -126,12 +163,6 @@ class InvoiceForm
                             })
                             ->default(fn () => \Tek2991\Accounting\Facades\Accounting::getCurrency())
                             ->searchable()
-                            ->required(),
-                            
-                        Forms\Components\Select::make('default_income_account_id')
-                            ->relationship('defaultIncomeAccount', 'name', fn ($query) => $query->where('category', AccountCategory::Revenue))
-                            ->searchable()
-                            ->preload()
                             ->required(),
                             
                         Forms\Components\Select::make('discount_type')
@@ -168,6 +199,7 @@ class InvoiceForm
                                 $pct = $netItemsTotal > 0 ? ($amount / $netItemsTotal) * 100 : 0;
                                 return "Rate: " . number_format($pct, 2) . '%';
                             }),
+
 
                         Forms\Components\Textarea::make('notes')
                             ->columnSpanFull(),

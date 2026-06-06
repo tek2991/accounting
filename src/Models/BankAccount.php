@@ -18,8 +18,9 @@ class BankAccount extends Model
 
     protected $fillable = [
         'company_id',
-        'account_id',
         'type',
+        'account_id',
+        'nickname',
         'number',
         'enabled',
         'created_by',
@@ -34,6 +35,20 @@ class BankAccount extends Model
     public function getTable(): string
     {
         return config('accounting.table_prefix', 'acc_') . 'bank_accounts';
+    }
+
+    protected static function booted(): void
+    {
+        static::saving(function (BankAccount $bankAccount) {
+            // If this account is being set as enabled, disable all others of the same type for this company
+            if ($bankAccount->enabled && $bankAccount->isDirty('enabled')) {
+                BankAccount::query()
+                    ->where('company_id', $bankAccount->company_id)
+                    ->where('type', $bankAccount->type)
+                    ->where('id', '!=', $bankAccount->id)
+                    ->update(['enabled' => false]);
+            }
+        });
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -134,10 +149,12 @@ class BankAccount extends Model
                     $query->where('archived', false);
                 }
             })
-            ->with(['account', 'account.subtype'])
+            ->with(['account'])
             ->get()
-            ->groupBy('account.subtype.name')
-            ->map(function ($accounts, string $subtype) {
+            ->groupBy(function ($bankAccount) {
+                return $bankAccount->account->reporting_class?->getLabel() ?? 'Other';
+            })
+            ->map(function ($accounts, string $reportingClass) {
                 return $accounts->mapWithKeys(function ($bankAccount) {
                     $label = $bankAccount->account->name;
                     if ($bankAccount->mask) {

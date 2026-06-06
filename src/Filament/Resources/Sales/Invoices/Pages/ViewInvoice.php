@@ -11,7 +11,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\DatePicker;
 use Tek2991\Accounting\Models\Account;
-use Tek2991\Accounting\Enums\AccountCategory;
+use Tek2991\Accounting\Enums\AccountType;
 
 class ViewInvoice extends ViewRecord
 {
@@ -42,7 +42,7 @@ class ViewInvoice extends ViewRecord
                         ->default(fn ($record) => $record->balance_due),
                     Select::make('payment_account_id')
                         ->label('Payment Account')
-                        ->options(Account::where('type', \Tek2991\Accounting\Enums\AccountType::CurrentAsset)->pluck('name', 'id'))
+                        ->options(Account::where('type', \Tek2991\Accounting\Enums\AccountType::Asset)->pluck('name', 'id'))
                         ->required(),
                     DatePicker::make('payment_date')
                         ->default(now())
@@ -50,8 +50,7 @@ class ViewInvoice extends ViewRecord
                     TextInput::make('reference'),
                 ])
                 ->action(function ($record, array $data) {
-                    $data['amount'] = (int) round($data['amount'] * 100); // Minor units
-                    app(InvoiceService::class)->recordPayment($record, $data);
+                                        app(InvoiceService::class)->recordPayment($record, $data);
                     \Filament\Notifications\Notification::make()->title('Payment recorded')->success()->send();
                 }),
             Actions\Action::make('cancel')
@@ -64,6 +63,12 @@ class ViewInvoice extends ViewRecord
                     app(InvoiceService::class)->cancel($record);
                     \Filament\Notifications\Notification::make()->title('Invoice cancelled')->success()->send();
                 }),
+            Actions\ActionGroup::make([
+                Actions\Action::make('issue_credit_note')
+                    ->label('Issue Credit Note')
+                    ->icon('heroicon-o-document-minus')
+                    ->url(fn ($record) => \Tek2991\Accounting\Filament\Resources\Sales\CreditNotes\CreditNoteResource::getUrl('create') . '?invoice_id=' . $record->id . '&contact_id=' . $record->contact_id)
+            ])->label('More')->icon('heroicon-m-ellipsis-vertical'),
         ];
     }
 }

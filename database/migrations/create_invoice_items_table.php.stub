@@ -22,6 +22,8 @@ return new class extends Migration
                   ->constrained("{$prefix}invoices")
                   ->cascadeOnDelete();
                   
+            $table->string('line_type', 20)->default('item');
+            
             $table->foreignId('item_id')
                   ->nullable()
                   ->constrained("{$prefix}items")

@@ -5,7 +5,7 @@ namespace Tek2991\Accounting\Filament\Resources\Taxes\Schemas;
 use Filament\Forms;
 use Filament\Schemas\Schema;
 use Filament\Schemas\Components\Section;
-use Tek2991\Accounting\Enums\AccountCategory;
+use Tek2991\Accounting\Enums\AccountType;
 use Tek2991\Accounting\Enums\TaxType;
 
 class TaxForm
@@ -43,7 +43,7 @@ class TaxForm
                     ->components([
                         Forms\Components\Repeater::make('components')
                             ->relationship()
-                            ->columns(3)
+                            ->columns(4)
                             ->schema([
                                 Forms\Components\TextInput::make('name')
                                     ->label('Component Name')
@@ -57,9 +57,16 @@ class TaxForm
                                     ->step('0.0001')
                                     ->suffix('%'),
                                     
-                                Forms\Components\Select::make('account_id')
-                                    ->label('Posting Account')
-                                    ->relationship('account', 'name', fn ($query) => $query->where('category', AccountCategory::Liability))
+                                Forms\Components\Select::make('sales_account_id')
+                                    ->label('Sales Tax Account (Liability)')
+                                    ->relationship('salesAccount', 'name', fn ($query) => $query->where('type', AccountType::Liability))
+                                    ->searchable()
+                                    ->preload()
+                                    ->required(),
+                                    
+                                Forms\Components\Select::make('purchase_account_id')
+                                    ->label('Purchase Tax Account (Asset)')
+                                    ->relationship('purchaseAccount', 'name', fn ($query) => $query->where('type', AccountType::Asset))
                                     ->searchable()
                                     ->preload()
                                     ->required(),

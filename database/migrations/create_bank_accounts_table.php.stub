@@ -26,7 +26,8 @@ return new class extends Migration
                 ->unique()  // one-to-one: each chart account can only be one bank account
                 ->constrained("{$prefix}accounts")
                 ->cascadeOnDelete();
-            $table->string('type', 20);         // BankAccountType enum
+            $table->string('type', 50); // BankAccountType enum
+            $table->string('nickname', 255);
             $table->string('number', 30)->nullable();  // masked account number
             $table->boolean('enabled')->default(false); // default/primary account flag
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
