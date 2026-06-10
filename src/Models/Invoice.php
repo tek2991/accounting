@@ -37,7 +37,17 @@ class Invoice extends Model
         'issue_date',
         'due_date',
         'currency_code',
+        'discount_type',
         'discount_rate',
+        'discount_amount',
+        'discount_account_id',
+        'tax_total',
+        'grand_total',
+        'amount_paid',
+        'balance_due',
+        'notes',
+        'terms',
+        'place_of_supply_state_id',
     ];
 
     protected $casts = [
@@ -73,6 +83,7 @@ class Invoice extends Model
     public function transaction(): BelongsTo { return $this->belongsTo(Transaction::class, 'transaction_id'); }
     public function items(): HasMany { return $this->hasMany(InvoiceItem::class, 'invoice_id')->orderBy('sort_order'); }
     public function payments(): MorphMany { return $this->morphMany(Payment::class, 'paymentable'); }
+    public function placeOfSupplyState(): BelongsTo { return $this->belongsTo(State::class, 'place_of_supply_state_id'); }
 
     // Helpers
     public function getIsOverdueAttribute(): bool

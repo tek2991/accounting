@@ -38,19 +38,19 @@ class InvoiceService
 
         // First pass: Gross amounts and item discounts
         foreach ($invoice->items as $item) {
-            $qty = $item->getRawOriginal('quantity');
+            $qty = ($item->getAttributes()['quantity'] ?? 0);
             if (empty($qty) || $qty == 0) {
                 $qty = 1;
             }
-            $price = $item->getRawOriginal('unit_price');
+            $price = ($item->getAttributes()['unit_price'] ?? 0);
             $gross = $qty * $price;
             $item->gross_amount = $gross / 100;
             
             $itemDiscount = 0;
             if ($item->discount_type === DiscountType::Percentage) {
-                $itemDiscount = $gross * ($item->getRawOriginal('discount_rate') / 100);
+                $itemDiscount = $gross * (($item->getAttributes()['discount_rate'] ?? 0) / 100);
             } elseif ($item->discount_type === DiscountType::Fixed) {
-                $itemDiscount = $item->getRawOriginal('discount_amount');
+                $itemDiscount = ($item->getAttributes()['discount_amount'] ?? 0);
             }
             $item->line_discount_amount = $itemDiscount / 100;
             
@@ -64,9 +64,9 @@ class InvoiceService
         // Document discount
         $docDiscount = 0;
         if ($invoice->discount_type === DiscountType::Percentage) {
-            $docDiscount = $preDocSubtotal * ($invoice->getRawOriginal('discount_rate') / 100);
+            $docDiscount = $preDocSubtotal * (($invoice->getAttributes()['discount_rate'] ?? 0) / 100);
         } elseif ($invoice->discount_type === DiscountType::Fixed) {
-            $docDiscount = $invoice->getRawOriginal('discount_amount');
+            $docDiscount = ($invoice->getAttributes()['discount_amount'] ?? 0);
         }
         $invoice->discount_amount = $docDiscount / 100;
 
@@ -80,7 +80,7 @@ class InvoiceService
 
         foreach ($invoice->items as $item) {
             $i++;
-            $lineNetBeforeDoc = ($item->getRawOriginal('gross_amount') - $item->getRawOriginal('line_discount_amount'));
+            $lineNetBeforeDoc = (($item->getAttributes()['gross_amount'] ?? 0) - ($item->getAttributes()['line_discount_amount'] ?? 0));
             
             $allocated = 0;
             if ($itemsCount > 0) {
@@ -107,7 +107,23 @@ class InvoiceService
                     $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
                     // Invoices don't have a document-level mode, they use the tax type directly
                     $docMode = $isInclusive ? 'inclusive' : 'exclusive';
-                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($taxableValue, $tax, $docMode, 'sales');
+                    
+                    $invoice->loadMissing('contact');
+                    $companyProfile = \Tek2991\Accounting\Models\CompanyProfile::firstOrCreate(
+                        ['company_id' => $invoice->company_id],
+                        ['tax_regime' => \Tek2991\Accounting\Enums\TaxRegimeType::Generic]
+                    );
+
+                    $taxContext = new \Tek2991\Accounting\ValueObjects\TaxCalculationContext(
+                        amount: $taxableValue,
+                        document: $invoice,
+                        tax: $tax,
+                        modeOverride: $docMode,
+                        companyProfile: $companyProfile,
+                        contact: $invoice->contact
+                    );
+
+                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($taxContext);
                     $itemTaxAmount = $taxComponents->sum('amount');
                     $item->tax_snapshot = $taxComponents->toArray();
                 }
@@ -129,7 +145,7 @@ class InvoiceService
         $grandTotal = $netItemsTotal + $taxTotal;
         $invoice->grand_total = $grandTotal / 100;
         
-        $balanceDue = $grandTotal - $invoice->getRawOriginal('amount_paid');
+        $balanceDue = $grandTotal - ($invoice->getAttributes()['amount_paid'] ?? 0);
         $invoice->balance_due = $balanceDue / 100;
 
         $invoice->save();
@@ -294,7 +310,7 @@ class InvoiceService
             $invoice->payments()->save($payment);
 
             // Update invoice amounts
-            $newPaid = $invoice->getRawOriginal('amount_paid') + $paymentAmount;
+            $newPaid = ($invoice->getAttributes()['amount_paid'] ?? 0) + $paymentAmount;
             $newBalance = $invoice->grand_total - $newPaid;
 
             $invoice->amount_paid = $newPaid / 100;

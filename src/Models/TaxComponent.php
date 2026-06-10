@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
+use Tek2991\Accounting\Enums\TaxComponentType;
 
 class TaxComponent extends Model
 {
@@ -26,6 +27,7 @@ class TaxComponent extends Model
     protected $fillable = [
         'tax_id',
         'name',
+        'type',
         'rate',
         'sales_account_id',
         'purchase_account_id',
@@ -33,6 +35,7 @@ class TaxComponent extends Model
 
     protected $casts = [
         'rate' => 'decimal:4',
+        'type' => TaxComponentType::class,
     ];
 
     public function getTable(): string

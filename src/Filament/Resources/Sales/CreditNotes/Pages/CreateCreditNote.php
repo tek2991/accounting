@@ -25,6 +25,7 @@ class CreateCreditNote extends CreateRecord
     protected function afterCreate(): void
     {
         $service = app(CreditNoteService::class);
+        $this->record->load('items');
         $service->recalculateTotals($this->record);
     }
 }

@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Tek2991\Accounting\Concerns\CompanyOwned;
 use Tek2991\Accounting\Enums\ContactType;
+use Tek2991\Accounting\Enums\GstRegistrationType;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
 
@@ -35,6 +37,10 @@ class Contact extends Model
         'email',
         'phone',
         'tax_id',
+        'state_id',
+        'is_tax_registered',
+        'gstin',
+        'gst_registration_type',
         'billing_address',
         'shipping_address',
         'receivable_balance',
@@ -43,11 +49,25 @@ class Contact extends Model
 
     protected $casts = [
         'type' => ContactType::class,
+        'gst_registration_type' => GstRegistrationType::class,
+        'is_tax_registered' => 'boolean',
     ];
 
     public function getTable(): string
     {
         return config('accounting.table_prefix', 'acc_') . 'contacts';
+    }
+
+    protected function gstin(): Attribute
+    {
+        return Attribute::make(
+            set: fn ($value) => $value ? strtoupper($value) : null,
+        );
+    }
+
+    public function state(): BelongsTo
+    {
+        return $this->belongsTo(State::class, 'state_id');
     }
 
     protected function receivableBalance(): Attribute

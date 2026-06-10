@@ -22,6 +22,7 @@ class EditCreditNote extends EditRecord
     protected function afterSave(): void
     {
         $service = app(CreditNoteService::class);
+        $this->record->load('items');
         $service->recalculateTotals($this->record);
     }
 }

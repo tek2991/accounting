@@ -7,12 +7,16 @@ use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Schemas\Schema;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Tek2991\Accounting\Contracts\CompanyAccessor;
 use Tek2991\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Tek2991\Accounting\Models\Setting;
+use Tek2991\Accounting\Enums\TaxRegimeType;
+use Tek2991\Accounting\Models\CompanyProfile;
+use Tek2991\Accounting\Models\State;
 
 class AccountingSettings extends Page implements HasForms
 {
@@ -52,7 +56,16 @@ class AccountingSettings extends Page implements HasForms
             ]
         );
 
-        $this->form->fill($setting->toArray());
+        $profile = CompanyProfile::firstOrCreate(
+            ['company_id' => $companyId],
+            ['tax_regime' => TaxRegimeType::Generic]
+        );
+
+        $this->form->fill([
+            ...$setting->toArray(),
+            'tax_regime' => $profile->tax_regime->value,
+            'company_state_id' => $profile->state_id,
+        ]);
     }
 
     public function form(Schema $schema): Schema
@@ -101,6 +114,26 @@ class AccountingSettings extends Page implements HasForms
                             ->columnSpanFull(),
                     ]),
                     
+                Section::make('Tax Regime')
+                    ->description('Configure your regional tax settings.')
+                    ->columns(2)
+                    ->schema([
+                        Forms\Components\Select::make('tax_regime')
+                            ->label('Tax Regime')
+                            ->options(TaxRegimeType::class)
+                            ->default(TaxRegimeType::Generic->value)
+                            ->required()
+                            ->live(),
+                            
+                        Forms\Components\Select::make('company_state_id')
+                            ->label('Company State')
+                            ->options(fn () => State::pluck('name', 'id'))
+                            ->searchable()
+                            ->required(fn (Get $get) => $get('tax_regime') === TaxRegimeType::IndiaGst || $get('tax_regime') === TaxRegimeType::IndiaGst->value)
+                            ->disabled(fn (Get $get) => !($get('tax_regime') === TaxRegimeType::IndiaGst || $get('tax_regime') === TaxRegimeType::IndiaGst->value))
+                            ->dehydrated(),
+                    ]),
+                    
                 Section::make('Document Numbering')
                     ->description('Set prefixes for automatically generated document numbers.')
                     ->columns(2)
@@ -130,11 +163,12 @@ class AccountingSettings extends Page implements HasForms
     {
         $data      = $this->form->getState();
         $companyId = app(CompanyAccessor::class)->getCurrentCompanyId();
+        $setting   = Setting::where('company_id', $companyId)->first();
 
         Setting::updateOrCreate(
             ['company_id' => $companyId],
             [
-                'default_currency'  => $data['default_currency'],
+                'default_currency'  => $data['default_currency'] ?? $setting?->default_currency ?? config('accounting.default_currency', 'USD'),
                 'company_name'      => $data['company_name'] ?? null,
                 'company_email'     => $data['company_email'] ?? null,
                 'company_phone'     => $data['company_phone'] ?? null,
@@ -144,6 +178,14 @@ class AccountingSettings extends Page implements HasForms
                 'bill_prefix'       => $data['bill_prefix'],
                 'payment_prefix'    => $data['payment_prefix'],
                 'journal_prefix'    => $data['journal_prefix'],
+            ]
+        );
+
+        CompanyProfile::updateOrCreate(
+            ['company_id' => $companyId],
+            [
+                'tax_regime' => $data['tax_regime'],
+                'state_id'   => $data['company_state_id'] ?? null,
             ]
         );
 

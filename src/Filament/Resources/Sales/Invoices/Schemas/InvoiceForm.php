@@ -124,6 +124,40 @@ class InvoiceForm
             ];
         };
 
+        $updateTaxesForPlaceOfSupply = function (callable $set, \Filament\Schemas\Components\Utilities\Get $get) {
+            $companyContext = app(\Tek2991\Accounting\Services\CompanyContext::class);
+            if (!$companyContext->isIndiaGst()) return;
+            
+            $companyStateId = $companyContext->getProfile()?->state_id;
+            $posStateId = $get('place_of_supply_state_id');
+            $isIntrastate = $companyStateId && $posStateId && ((string)$companyStateId === (string)$posStateId);
+            
+            $items = $get('items') ?? [];
+            $updated = false;
+            foreach ($items as $index => &$item) {
+                if (!empty($item['tax_id'])) {
+                    $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item['tax_id']);
+                    if ($tax) {
+                        $components = $tax->components->filter(function ($c) use ($isIntrastate) {
+                            return $isIntrastate 
+                                ? $c->type === \Tek2991\Accounting\Enums\TaxComponentType::Intrastate 
+                                : $c->type === \Tek2991\Accounting\Enums\TaxComponentType::Interstate;
+                        });
+                        $item['tax_snapshot'] = $components->map(fn($c) => [
+                            'account_id' => $c->account_id,
+                            'name' => $c->name,
+                            'rate' => $c->rate,
+                            'amount' => 0,
+                        ])->values()->toArray();
+                        $updated = true;
+                    }
+                }
+            }
+            if ($updated) {
+                $set('items', $items);
+            }
+        };
+
         return $schema
             ->components([
                 Section::make('Invoice Details')
@@ -140,7 +174,28 @@ class InvoiceForm
                             ->relationship('contact', 'name', fn ($query) => $query->whereIn('type', [\Tek2991\Accounting\Enums\ContactType::Customer, \Tek2991\Accounting\Enums\ContactType::Both]))
                             ->searchable()
                             ->preload()
+                            ->reactive()
+                            ->afterStateUpdated(function (callable $set, $state, \Filament\Schemas\Components\Utilities\Get $get) use ($updateTaxesForPlaceOfSupply) {
+                                if ($state) {
+                                    $contact = \Tek2991\Accounting\Models\Contact::find($state);
+                                    if ($contact && $contact->state_id) {
+                                        $set('place_of_supply_state_id', $contact->state_id);
+                                    }
+                                }
+                                $updateTaxesForPlaceOfSupply($set, $get);
+                            })
                             ->required(),
+                            
+                        Forms\Components\Select::make('place_of_supply_state_id')
+                            ->label('Place of Supply (State)')
+                            ->options(fn () => \Tek2991\Accounting\Models\State::pluck('name', 'id'))
+                            ->searchable()
+                            ->preload()
+                            ->reactive()
+                            ->afterStateUpdated(function (callable $set, \Filament\Schemas\Components\Utilities\Get $get) use ($updateTaxesForPlaceOfSupply) {
+                                $updateTaxesForPlaceOfSupply($set, $get);
+                            })
+                            ->visible(fn () => app(\Tek2991\Accounting\Services\CompanyContext::class)->isIndiaGst()),
                             
                         Forms\Components\DatePicker::make('issue_date')
                             ->default(now())
@@ -286,17 +341,33 @@ class InvoiceForm
                                     ->preload()
                                     ->columnSpan(2)
                                     ->reactive()
-                                    ->afterStateUpdated(function ($state, callable $set) {
+                                    ->afterStateUpdated(function ($state, callable $set, \Filament\Schemas\Components\Utilities\Get $get) {
                                         if ($state) {
-                                            $tax = Tax::find($state);
+                                            $tax = Tax::with('components')->find($state);
                                             if ($tax) {
-                                                $components = $tax->components->map(fn($c) => [
+                                                $companyContext = app(\Tek2991\Accounting\Services\CompanyContext::class);
+                                                $components = $tax->components;
+                                                
+                                                if ($companyContext->isIndiaGst()) {
+                                                    $companyStateId = $companyContext->getProfile()?->state_id;
+                                                    $posStateId = $get('../../place_of_supply_state_id');
+                                                    $isIntrastate = $companyStateId && $posStateId && ((string)$companyStateId === (string)$posStateId);
+                                                    
+                                                    $components = $components->filter(function ($c) use ($isIntrastate) {
+                                                        return $isIntrastate 
+                                                            ? $c->type === \Tek2991\Accounting\Enums\TaxComponentType::Intrastate 
+                                                            : $c->type === \Tek2991\Accounting\Enums\TaxComponentType::Interstate;
+                                                    });
+                                                }
+
+                                                $snapshot = $components->map(fn($c) => [
                                                     'account_id' => $c->account_id,
                                                     'name' => $c->name,
                                                     'rate' => $c->rate,
                                                     'amount' => 0,
-                                                ])->toArray();
-                                                $set('tax_snapshot', $components);
+                                                ])->values()->toArray();
+                                                
+                                                $set('tax_snapshot', $snapshot);
                                             }
                                         }
                                     }),

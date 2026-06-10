@@ -31,6 +31,7 @@ class CreateInvoice extends CreateRecord
     protected function afterCreate(): void
     {
         $service = app(InvoiceService::class);
+        $this->record->load('items');
         $service->recalculateTotals($this->record);
     }
 }

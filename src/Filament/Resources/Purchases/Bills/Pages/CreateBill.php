@@ -28,6 +28,7 @@ class CreateBill extends CreateRecord
     protected function afterCreate(): void
     {
         $service = app(BillService::class);
+        $this->record->load('items');
         $service->recalculateTotals($this->record);
     }
 }

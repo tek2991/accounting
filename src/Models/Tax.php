@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Tek2991\Accounting\Concerns\CompanyOwned;
-use Tek2991\Accounting\Enums\TaxType;
+
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
 
@@ -30,12 +30,10 @@ class Tax extends Model
         'company_id',
         'name',
         'description',
-        'type',
         'is_active',
     ];
 
     protected $casts = [
-        'type' => TaxType::class,
         'is_active' => 'boolean',
     ];
 

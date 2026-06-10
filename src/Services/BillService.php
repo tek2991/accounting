@@ -37,19 +37,19 @@ class BillService
 
         // First pass: Gross amounts and item discounts
         foreach ($bill->items as $item) {
-            $qty = $item->getRawOriginal('quantity');
+            $qty = ($item->getAttributes()['quantity'] ?? 0);
             if (empty($qty) || $qty == 0) {
                 $qty = 1;
             }
-            $price = $item->getRawOriginal('unit_price');
+            $price = ($item->getAttributes()['unit_price'] ?? 0);
             $gross = $qty * $price;
             $item->gross_amount = $gross / 100;
             
             $itemDiscount = 0;
             if ($item->discount_type === DiscountType::Percentage) {
-                $itemDiscount = $gross * ($item->getRawOriginal('discount_rate') / 100);
+                $itemDiscount = $gross * (($item->getAttributes()['discount_rate'] ?? 0) / 100);
             } elseif ($item->discount_type === DiscountType::Fixed) {
-                $itemDiscount = $item->getRawOriginal('discount_amount');
+                $itemDiscount = ($item->getAttributes()['discount_amount'] ?? 0);
             }
             $item->line_discount_amount = $itemDiscount / 100;
             
@@ -63,9 +63,9 @@ class BillService
         // Document discount
         $docDiscount = 0;
         if ($bill->discount_type === DiscountType::Percentage) {
-            $docDiscount = $preDocSubtotal * ($bill->getRawOriginal('discount_rate') / 100);
+            $docDiscount = $preDocSubtotal * (($bill->getAttributes()['discount_rate'] ?? 0) / 100);
         } elseif ($bill->discount_type === DiscountType::Fixed) {
-            $docDiscount = $bill->getRawOriginal('discount_amount');
+            $docDiscount = ($bill->getAttributes()['discount_amount'] ?? 0);
         }
         $bill->discount_amount = $docDiscount / 100;
 
@@ -79,7 +79,7 @@ class BillService
 
         foreach ($bill->items as $item) {
             $i++;
-            $lineNetBeforeDoc = ($item->getRawOriginal('gross_amount') - $item->getRawOriginal('line_discount_amount'));
+            $lineNetBeforeDoc = (($item->getAttributes()['gross_amount'] ?? 0) - ($item->getAttributes()['line_discount_amount'] ?? 0));
             
             $allocated = 0;
             if ($itemsCount > 0) {
@@ -113,7 +113,23 @@ class BillService
                     $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
                     if ($tax) {
                         $isInclusive = $docMode === 'inclusive';
-                        $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($taxableValue, $tax, $docMode, 'purchase');
+
+                        $bill->loadMissing('contact');
+                        $companyProfile = \Tek2991\Accounting\Models\CompanyProfile::firstOrCreate(
+                            ['company_id' => $bill->company_id],
+                            ['tax_regime' => \Tek2991\Accounting\Enums\TaxRegimeType::Generic]
+                        );
+
+                        $taxContext = new \Tek2991\Accounting\ValueObjects\TaxCalculationContext(
+                            amount: $taxableValue,
+                            document: $bill,
+                            tax: $tax,
+                            modeOverride: $docMode,
+                            companyProfile: $companyProfile,
+                            contact: $bill->contact
+                        );
+
+                        $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($taxContext);
                         $itemTaxAmount = $taxComponents->sum('amount');
                         $item->tax_snapshot = $taxComponents->toArray();
                     }
@@ -136,7 +152,7 @@ class BillService
         $grandTotal = $netItemsTotal + $taxTotal;
         $bill->grand_total = $grandTotal / 100;
         
-        $balanceDue = $grandTotal - $bill->getRawOriginal('amount_paid');
+        $balanceDue = $grandTotal - ($bill->getAttributes()['amount_paid'] ?? 0);
         $bill->balance_due = $balanceDue / 100;
 
         $bill->save();
@@ -300,7 +316,7 @@ class BillService
             $bill->payments()->save($payment);
 
             // Update bill amounts
-            $newPaid = $bill->getRawOriginal('amount_paid') + $paymentAmount;
+            $newPaid = ($bill->getAttributes()['amount_paid'] ?? 0) + $paymentAmount;
             $newBalance = $bill->grand_total - $newPaid;
 
             $bill->amount_paid = $newPaid / 100;

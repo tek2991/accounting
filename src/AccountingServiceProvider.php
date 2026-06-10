@@ -10,6 +10,8 @@ use Tek2991\Accounting\Services\TransactionService;
 use Tek2991\Accounting\Services\TaxService;
 use Tek2991\Accounting\Services\InvoiceService;
 use Tek2991\Accounting\Services\BillService;
+use Tek2991\Accounting\Services\CompanyContext;
+use Tek2991\Accounting\Services\TaxRegimeResolver;
 use Tek2991\Accounting\Services\FiscalPeriodService;
 use Tek2991\Accounting\Services\CreditNoteService;
 use Tek2991\Accounting\Services\DebitNoteService;
@@ -47,6 +49,11 @@ class AccountingServiceProvider extends PackageServiceProvider
                 'create_debit_notes_table',
                 'create_debit_note_items_table',
                 'add_discount_fields_to_items_tables',
+                'create_states_table',
+                'create_company_profiles_table',
+                'add_gst_fields_to_contacts_table',
+                'add_type_to_tax_components_table',
+                'add_place_of_supply_to_documents_tables',
             ])
             ->hasViews('accounting')
             ->hasTranslations();
@@ -107,6 +114,8 @@ class AccountingServiceProvider extends PackageServiceProvider
 
         $this->app->singleton(AccountService::class);
         $this->app->singleton(TransactionService::class);
+        $this->app->singleton(TaxRegimeResolver::class);
+        $this->app->singleton(CompanyContext::class);
         $this->app->singleton(TaxService::class);
         $this->app->singleton(DocumentNumberService::class);
         $this->app->singleton(InvoiceService::class);

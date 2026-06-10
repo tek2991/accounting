@@ -17,9 +17,6 @@ class TaxesTable
                 Tables\Columns\TextColumn::make('name')
                     ->searchable()
                     ->sortable(),
-                Tables\Columns\TextColumn::make('type')
-                    ->badge()
-                    ->sortable(),
                 Tables\Columns\TextColumn::make('total_rate')
                     ->label('Total Rate (%)')
                     ->getStateUsing(fn (Tax $record) => $record->total_rate . '%'),
@@ -29,8 +26,6 @@ class TaxesTable
             ])
             ->filters([
                 Tables\Filters\TernaryFilter::make('is_active'),
-                Tables\Filters\SelectFilter::make('type')
-                    ->options(TaxType::class),
                 Tables\Filters\TrashedFilter::make(),
             ])
             ->recordActions([

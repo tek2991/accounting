@@ -25,6 +25,7 @@ class CreateDebitNote extends CreateRecord
     protected function afterCreate(): void
     {
         $service = app(DebitNoteService::class);
+        $this->record->load('items');
         $service->recalculateTotals($this->record);
     }
 }

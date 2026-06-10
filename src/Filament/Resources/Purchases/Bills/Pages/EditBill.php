@@ -22,6 +22,7 @@ class EditBill extends EditRecord
     protected function afterSave(): void
     {
         $service = app(BillService::class);
+        $this->record->load('items');
         $service->recalculateTotals($this->record);
     }
 }

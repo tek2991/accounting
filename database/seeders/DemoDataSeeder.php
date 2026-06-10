@@ -139,11 +139,11 @@ class DemoDataSeeder extends Seeder
                 'email' => 'ramesh@demo.com',
             ]);
 
-            // 5. Taxes (GST 18%)
-            // Create Ledger Accounts for CGST and SGST
+            // 5. Taxes (GST 9% & 18%)
+            // Create Ledger Accounts for CGST, SGST, IGST
             $outputCgstAccount = Account::firstOrCreate([
                 'company_id' => $companyId,
-                'name' => 'Output CGST @ 9%',
+                'name' => 'Output CGST',
             ], [
                 'type' => AccountType::Liability,
                 'reporting_class' => ReportingClass::CurrentLiability,
@@ -152,7 +152,16 @@ class DemoDataSeeder extends Seeder
 
             $outputSgstAccount = Account::firstOrCreate([
                 'company_id' => $companyId,
-                'name' => 'Output SGST @ 9%',
+                'name' => 'Output SGST',
+            ], [
+                'type' => AccountType::Liability,
+                'reporting_class' => ReportingClass::CurrentLiability,
+                'currency_code' => \Tek2991\Accounting\Facades\Accounting::getCurrency(),
+            ]);
+
+            $outputIgstAccount = Account::firstOrCreate([
+                'company_id' => $companyId,
+                'name' => 'Output IGST',
             ], [
                 'type' => AccountType::Liability,
                 'reporting_class' => ReportingClass::CurrentLiability,
@@ -161,7 +170,7 @@ class DemoDataSeeder extends Seeder
 
             $inputCgstAccount = Account::firstOrCreate([
                 'company_id' => $companyId,
-                'name' => 'Input CGST @ 9%',
+                'name' => 'Input CGST',
             ], [
                 'type' => AccountType::Asset,
                 'reporting_class' => ReportingClass::CurrentAsset,
@@ -170,60 +179,85 @@ class DemoDataSeeder extends Seeder
 
             $inputSgstAccount = Account::firstOrCreate([
                 'company_id' => $companyId,
-                'name' => 'Input SGST @ 9%',
+                'name' => 'Input SGST',
             ], [
                 'type' => AccountType::Asset,
                 'reporting_class' => ReportingClass::CurrentAsset,
                 'currency_code' => \Tek2991\Accounting\Facades\Accounting::getCurrency(),
             ]);
 
-            // Exclusive Tax
-            $gst18Exclusive = Tax::firstOrCreate([
+            $inputIgstAccount = Account::firstOrCreate([
                 'company_id' => $companyId,
-                'name' => 'GST @ 18% (Exclusive)',
+                'name' => 'Input IGST',
             ], [
-                'type' => TaxType::Exclusive,
-                'description' => '9% CGST + 9% SGST',
+                'type' => AccountType::Asset,
+                'reporting_class' => ReportingClass::CurrentAsset,
+                'currency_code' => \Tek2991\Accounting\Facades\Accounting::getCurrency(),
+            ]);
+
+            // GST 9%
+            $gst9 = Tax::firstOrCreate([
+                'company_id' => $companyId,
+                'name' => 'GST 9%',
+            ], [
+                'description' => '4.5% CGST + 4.5% SGST | 9% IGST',
                 'is_active' => true,
             ]);
 
-            if ($gst18Exclusive->wasRecentlyCreated) {
-                $gst18Exclusive->components()->create([
+            if ($gst9->wasRecentlyCreated) {
+                $gst9->components()->create([
                     'name' => 'CGST',
-                    'rate' => 9.00,
+                    'rate' => 4.50,
+                    'type' => \Tek2991\Accounting\Enums\TaxComponentType::Intrastate->value,
                     'sales_account_id' => $outputCgstAccount->id,
                     'purchase_account_id' => $inputCgstAccount->id,
                 ]);
-                $gst18Exclusive->components()->create([
+                $gst9->components()->create([
                     'name' => 'SGST',
-                    'rate' => 9.00,
+                    'rate' => 4.50,
+                    'type' => \Tek2991\Accounting\Enums\TaxComponentType::Intrastate->value,
                     'sales_account_id' => $outputSgstAccount->id,
                     'purchase_account_id' => $inputSgstAccount->id,
+                ]);
+                $gst9->components()->create([
+                    'name' => 'IGST',
+                    'rate' => 9.00,
+                    'type' => \Tek2991\Accounting\Enums\TaxComponentType::Interstate->value,
+                    'sales_account_id' => $outputIgstAccount->id,
+                    'purchase_account_id' => $inputIgstAccount->id,
                 ]);
             }
 
-            // Inclusive Tax
-            $gst18Inclusive = Tax::firstOrCreate([
+            // GST 18%
+            $gst18 = Tax::firstOrCreate([
                 'company_id' => $companyId,
-                'name' => 'GST @ 18% (Inclusive)',
+                'name' => 'GST 18%',
             ], [
-                'type' => TaxType::Inclusive,
-                'description' => '9% CGST + 9% SGST',
+                'description' => '9% CGST + 9% SGST | 18% IGST',
                 'is_active' => true,
             ]);
 
-            if ($gst18Inclusive->wasRecentlyCreated) {
-                $gst18Inclusive->components()->create([
+            if ($gst18->wasRecentlyCreated) {
+                $gst18->components()->create([
                     'name' => 'CGST',
                     'rate' => 9.00,
+                    'type' => \Tek2991\Accounting\Enums\TaxComponentType::Intrastate->value,
                     'sales_account_id' => $outputCgstAccount->id,
                     'purchase_account_id' => $inputCgstAccount->id,
                 ]);
-                $gst18Inclusive->components()->create([
+                $gst18->components()->create([
                     'name' => 'SGST',
                     'rate' => 9.00,
+                    'type' => \Tek2991\Accounting\Enums\TaxComponentType::Intrastate->value,
                     'sales_account_id' => $outputSgstAccount->id,
                     'purchase_account_id' => $inputSgstAccount->id,
+                ]);
+                $gst18->components()->create([
+                    'name' => 'IGST',
+                    'rate' => 18.00,
+                    'type' => \Tek2991\Accounting\Enums\TaxComponentType::Interstate->value,
+                    'sales_account_id' => $outputIgstAccount->id,
+                    'purchase_account_id' => $inputIgstAccount->id,
                 ]);
             }
 

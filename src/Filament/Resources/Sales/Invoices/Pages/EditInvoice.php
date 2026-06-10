@@ -22,6 +22,7 @@ class EditInvoice extends EditRecord
     protected function afterSave(): void
     {
         $service = app(InvoiceService::class);
+        $this->record->load('items');
         $service->recalculateTotals($this->record);
     }
 }

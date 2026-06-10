@@ -35,11 +35,11 @@ class CreditNoteService
 
         foreach ($cn->items as $item) {
             // Line total = qty * unit_price
-            $qty = $item->getRawOriginal('quantity');
+            $qty = ($item->getAttributes()['quantity'] ?? 0);
             if (empty($qty) || $qty == 0) {
                 $qty = 1;
             }
-            $baseLineTotal = $qty * $item->getRawOriginal('unit_price');
+            $baseLineTotal = $qty * ($item->getAttributes()['unit_price'] ?? 0);
             
             // Calculate Tax
             $itemTaxAmount = 0;
@@ -78,7 +78,7 @@ class CreditNoteService
         $grandTotal = $subtotal + $taxTotal;
         $cn->grand_total = $grandTotal / 100;
         
-        $balanceRemaining = $grandTotal - $cn->getRawOriginal('applied_amount');
+        $balanceRemaining = $grandTotal - ($cn->getAttributes()['applied_amount'] ?? 0);
         $cn->balance_remaining = $balanceRemaining / 100;
 
         $cn->save();
