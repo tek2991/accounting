@@ -64,6 +64,7 @@ class BillForm
             $taxableAmount = 0;
             $taxTotal = 0;
             $netItemsTotal = 0;
+            $taxBreakdown = [];
             
             foreach ($itemsData as $index => $data) {
                 $i++;
@@ -94,7 +95,10 @@ class BillForm
                     if ($docMode === 'manual') {
                         $isInclusive = false;
                         foreach ($item['tax_snapshot'] ?? [] as $comp) {
-                            $itemTaxAmount += (float) ($comp['amount'] ?? 0);
+                            $compAmount = (float) ($comp['amount'] ?? 0);
+                            $itemTaxAmount += $compAmount;
+                            $name = $comp['name'] ?? 'Tax';
+                            $taxBreakdown[$name] = ($taxBreakdown[$name] ?? 0) + $compAmount;
                         }
                     } else {
                         $isInclusive = $docMode === 'inclusive';
@@ -106,6 +110,14 @@ class BillForm
                             $itemTaxAmount = $taxableValue * ($rateSum / (100 + $rateSum));
                         } else {
                             $itemTaxAmount = $taxableValue * ($rateSum / 100);
+                        }
+                        if ($rateSum > 0) {
+                            foreach ($item['tax_snapshot'] ?? [] as $comp) {
+                                $rate = (float) ($comp['rate'] ?? 0);
+                                $compAmount = $itemTaxAmount * ($rate / $rateSum);
+                                $name = $comp['name'] ?? 'Tax';
+                                $taxBreakdown[$name] = ($taxBreakdown[$name] ?? 0) + $compAmount;
+                            }
                         }
                     }
                 }
@@ -125,8 +137,13 @@ class BillForm
             
             return [
                 'subtotal' => $grossSubtotal,
-                'total_discount' => $totalDiscount,
+                'line_discounts' => $totalItemDiscounts,
+                'subtotal_after_line_discounts' => $preDocSubtotal,
+                'doc_discount' => $docDiscount,
+                'net_amount' => $preDocSubtotal - $docDiscount,
                 'taxable_amount' => $taxableAmount,
+                'tax_breakdown' => $taxBreakdown,
+                'total_discount' => $totalDiscount,
                 'tax_total' => $taxTotal,
                 'grand_total' => $grandTotal,
             ];
@@ -202,6 +219,31 @@ class BillForm
                             ->reactive()
                             ->afterStateUpdated(function (callable $set, \Filament\Schemas\Components\Utilities\Get $get) use ($updateTaxesForPlaceOfSupply) {
                                 $updateTaxesForPlaceOfSupply($set, $get);
+                            })
+                            ->visible(fn () => app(\Tek2991\Accounting\Services\CompanyContext::class)->isIndiaGst()),
+                            
+                        Forms\Components\Placeholder::make('tax_determination')
+                            ->label('Tax Determination')
+                            ->content(function (\Filament\Schemas\Components\Utilities\Get $get) {
+                                $companyContext = app(\Tek2991\Accounting\Services\CompanyContext::class);
+                                if (!$companyContext->isIndiaGst()) return 'N/A';
+                                
+                                $companyStateId = $companyContext->getProfile()?->state_id;
+                                $companyState = $companyStateId ? \Tek2991\Accounting\Models\State::find($companyStateId)?->name : 'Unknown';
+                                
+                                $posStateId = $get('place_of_supply_state_id');
+                                $posState = $posStateId ? \Tek2991\Accounting\Models\State::find($posStateId)?->name : 'Unknown';
+                                
+                                $type = ($companyStateId && $posStateId && (string)$companyStateId === (string)$posStateId) ? 'Intrastate' : 'Interstate';
+                                
+                                return new \Illuminate\Support\HtmlString(
+                                    "<div class='text-sm space-y-1'>" .
+                                    "<div>Tax Regime: <strong>India GST</strong></div>" .
+                                    "<div>Company State: <strong>{$companyState}</strong></div>" .
+                                    "<div>Place of Supply: <strong>{$posState}</strong></div>" .
+                                    "<div>Supply Type: <strong>{$type}</strong></div>" .
+                                    "</div>"
+                                );
                             })
                             ->visible(fn () => app(\Tek2991\Accounting\Services\CompanyContext::class)->isIndiaGst()),
                             
@@ -283,33 +325,49 @@ class BillForm
                     
                 Section::make('Summary')
                     ->columnSpan(1)
-                    ->columns(2)
+                    ->columns(1)
                     ->components([
-                        Forms\Components\Placeholder::make('subtotal')
-                            ->label('Subtotal')
-                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['subtotal'], 2)),
-                        Forms\Components\Placeholder::make('total_discount')
-                            ->label('Total Discount')
-                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['total_discount'], 2)),
-                        Forms\Components\Placeholder::make('taxable_amount')
-                            ->label('Taxable Amount')
-                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['taxable_amount'], 2)),
-                        Forms\Components\Placeholder::make('tax_total')
-                            ->label('Total Tax')
-                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['tax_total'], 2)),
-                        Forms\Components\Placeholder::make('grand_total')
-                            ->label('Grand Total')
-                            ->content(fn ($get) => ($get('currency_code') ?? 'USD') . ' ' . number_format($calculateTotals($get)['grand_total'], 2))
-                            ->extraAttributes(['class' => 'font-bold text-lg']),
-                        Forms\Components\Placeholder::make('balance_due')
-                            ->label('Balance Due')
+                        Forms\Components\Placeholder::make('summary_details')
+                            ->label('')
                             ->content(function ($get, $record) use ($calculateTotals) {
-                                $grandTotal = $calculateTotals($get)['grand_total'];
+                                $totals = $calculateTotals($get);
+                                $currency = $get('currency_code') ?? 'USD';
+                                
+                                $format = fn($val) => number_format($val, 2);
+                                
+                                $html = "<table class='w-full text-sm text-right'>";
+                                $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Subtotal</td><td class='py-1'>{$currency} {$format($totals['subtotal'])}</td></tr>";
+                                
+                                if ($totals['line_discounts'] > 0) {
+                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Line Discounts</td><td class='py-1 text-danger-600'>- {$currency} {$format($totals['line_discounts'])}</td></tr>";
+                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Subtotal After Line Disc.</td><td class='py-1'>{$currency} {$format($totals['subtotal_after_line_discounts'])}</td></tr>";
+                                }
+                                
+                                if ($totals['doc_discount'] > 0) {
+                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Bill Discount</td><td class='py-1 text-danger-600'>- {$currency} {$format($totals['doc_discount'])}</td></tr>";
+                                }
+                                
+                                $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Net Amount</td><td class='py-1'>{$currency} {$format($totals['net_amount'])}</td></tr>";
+                                $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Taxable Amount</td><td class='py-1'>{$currency} {$format($totals['taxable_amount'])}</td></tr>";
+                                
+                                if (!empty($totals['tax_breakdown'])) {
+                                    foreach ($totals['tax_breakdown'] as $taxName => $taxAmount) {
+                                        $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>{$taxName}</td><td class='py-1'>{$currency} {$format($taxAmount)}</td></tr>";
+                                    }
+                                } else {
+                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Total Tax</td><td class='py-1'>{$currency} {$format($totals['tax_total'])}</td></tr>";
+                                }
+                                
+                                $html .= "<tr class='text-lg font-bold'><td class='py-2 pr-4'>Grand Total</td><td class='py-2'>{$currency} {$format($totals['grand_total'])}</td></tr>";
+                                
                                 $paid = $record ? (float) $record->amount_paid : 0;
-                                return ($get('currency_code') ?? 'USD') . ' ' . number_format(max(0, $grandTotal - $paid), 2);
-                            })
-                            ->extraAttributes(['class' => 'font-bold text-lg text-danger-600'])
-                            ->columnSpanFull(),
+                                $balanceDue = max(0, $totals['grand_total'] - $paid);
+                                
+                                $html .= "<tr class='text-lg font-bold text-danger-600'><td class='py-2 pr-4'>Balance Due</td><td class='py-2'>{$currency} {$format($balanceDue)}</td></tr>";
+                                $html .= "</table>";
+                                
+                                return new \Illuminate\Support\HtmlString($html);
+                            }),
                     ]),
                     
                 Section::make('Line Items')
@@ -378,7 +436,13 @@ class BillForm
                                     ->visible(fn ($get) => $get('line_type') === 'item'),
                                     
                                 Forms\Components\TextInput::make('unit_price')
-                                    ->label(fn ($get) => $get('line_type') === 'account' ? 'Amount' : 'Unit Price')
+                                    ->label(function ($get) {
+                                        $base = $get('line_type') === 'account' ? 'Amount' : 'Unit Price';
+                                        $mode = $get('../../tax_computation_mode') ?? 'exclusive';
+                                        if ($mode === 'inclusive') return $base . ' (Tax Inclusive)';
+                                        if ($mode === 'exclusive') return $base . ' (Tax Exclusive)';
+                                        return $base;
+                                    })
                                     ->numeric()
                                     ->required()
                                     ->reactive()
