@@ -17,9 +17,18 @@ Welcome to the **Tek2991 Accounting Plugin** for Filament! This package transfor
 
 *Note: You'll need a Filament panel installed and configured in your Laravel app.*
 
-```bash
 composer require tek2991/accounting
 ```
+
+### PDF Generation Prerequisites
+
+This package relies on `spatie/laravel-pdf` and defaults to generating PDFs via **Puppeteer** (using Browsershot). Ensure you have Node and NPM available in your environment, and that Puppeteer is installed:
+
+```bash
+npm install -g puppeteer
+```
+
+If Puppeteer is unavailable or fails, the plugin will automatically fallback to **DOMPDF** (pure PHP) to ensure your PDFs still generate.
 
 ### Publish & Migrate
 

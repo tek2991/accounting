@@ -44,11 +44,11 @@ class InvoicesTable
                     }),
                     
                 Tables\Columns\TextColumn::make('grand_total')
-                    ->money(config('accounting.default_currency', 'USD'))
+                    ->money(fn ($record) => $record->currency_code ?? config('accounting.default_currency', 'USD'))
                     ->sortable(),
                     
                 Tables\Columns\TextColumn::make('balance_due')
-                    ->money(config('accounting.default_currency', 'USD'))
+                    ->money(fn ($record) => $record->currency_code ?? config('accounting.default_currency', 'USD'))
                     ->sortable()
                     ->color(fn ($state) => $state > 0 ? 'danger' : null),
             ])
@@ -71,6 +71,14 @@ class InvoicesTable
                         app(\Tek2991\Accounting\Services\InvoiceService::class)->post($record);
                         // Using Filament Notification to inform user
                         \Filament\Notifications\Notification::make()->title('Invoice posted successfully')->success()->send();
+                    }),
+                Actions\Action::make('download_pdf')
+                    ->label('PDF')
+                    ->icon('heroicon-o-document-arrow-down')
+                    ->action(function (Invoice $record) {
+                        $path = app(\Tek2991\Accounting\Services\InvoiceService::class)->generatePdf($record);
+                        $disk = config('accounting.pdf.disk', 'public');
+                        return response()->download(\Illuminate\Support\Facades\Storage::disk($disk)->path($path));
                     }),
             ])
             ->groupedBulkActions([

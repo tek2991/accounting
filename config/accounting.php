@@ -100,6 +100,10 @@ return [
     */
 
     'pdf' => [
+        'driver' => env('ACCOUNTING_PDF_DRIVER', 'browsershot'),
+        'fallback_driver' => env('ACCOUNTING_PDF_FALLBACK_DRIVER', 'dompdf'),
+        'disk' => env('ACCOUNTING_PDF_DISK', 'public'),
+        'show_watermark' => env('ACCOUNTING_PDF_WATERMARK', false),
         'paper_size' => 'A4',
         'orientation' => 'portrait',
     ],

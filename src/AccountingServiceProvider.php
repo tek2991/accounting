@@ -54,6 +54,7 @@ class AccountingServiceProvider extends PackageServiceProvider
                 'add_gst_fields_to_contacts_table',
                 'add_type_to_tax_components_table',
                 'add_place_of_supply_to_documents_tables',
+                'add_seller_invoice_path_to_bills_table',
             ])
             ->hasViews('accounting')
             ->hasTranslations();

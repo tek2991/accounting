@@ -37,6 +37,7 @@ class Invoice extends Model
         'issue_date',
         'due_date',
         'currency_code',
+        'exchange_rate',
         'discount_type',
         'discount_rate',
         'discount_amount',

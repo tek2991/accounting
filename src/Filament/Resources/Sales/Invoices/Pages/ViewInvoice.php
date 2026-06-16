@@ -31,6 +31,14 @@ class ViewInvoice extends ViewRecord
                     app(InvoiceService::class)->post($record);
                     \Filament\Notifications\Notification::make()->title('Invoice posted')->success()->send();
                 }),
+            Actions\Action::make('download_pdf')
+                ->label('Download PDF')
+                ->icon('heroicon-o-document-arrow-down')
+                ->action(function ($record) {
+                    $path = app(InvoiceService::class)->generatePdf($record);
+                    $disk = config('accounting.pdf.disk', 'public');
+                    return response()->download(\Illuminate\Support\Facades\Storage::disk($disk)->path($path));
+                }),
             Actions\Action::make('record_payment')
                 ->label('Record Payment')
                 ->icon('heroicon-o-banknotes')

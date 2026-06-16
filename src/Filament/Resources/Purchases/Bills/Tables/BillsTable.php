@@ -45,11 +45,11 @@ class BillsTable
                     }),
                     
                 Tables\Columns\TextColumn::make('grand_total')
-                    ->money(config('accounting.default_currency', 'USD'))
+                    ->money(fn ($record) => $record->currency_code ?? config('accounting.default_currency', 'USD'))
                     ->sortable(),
                     
                 Tables\Columns\TextColumn::make('balance_due')
-                    ->money(config('accounting.default_currency', 'USD'))
+                    ->money(fn ($record) => $record->currency_code ?? config('accounting.default_currency', 'USD'))
                     ->sortable()
                     ->color(fn ($state) => $state > 0 ? 'danger' : null),
             ])

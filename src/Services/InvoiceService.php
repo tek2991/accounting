@@ -16,6 +16,7 @@ class InvoiceService
         private TransactionService $txnService,
         private DocumentNumberService $docNumberService,
         private PostingGuard $postingGuard,
+        private PdfService $pdfService,
     ) {}
 
     public function create(int $companyId, array $data): Invoice
@@ -369,5 +370,17 @@ class InvoiceService
                 ->event('invoice.cancelled')
                 ->log("Invoice {$invoice->invoice_number} cancelled");
         });
+    }
+
+    public function generatePdf(Invoice $invoice): string
+    {
+        $invoice->loadMissing(['items.tax', 'items.item', 'contact']);
+        $filename = "invoice_{$invoice->invoice_number}.pdf";
+        
+        return $this->pdfService->generateAndSave(
+            'accounting::pdf.invoice',
+            ['invoice' => $invoice],
+            $filename
+        );
     }
 }

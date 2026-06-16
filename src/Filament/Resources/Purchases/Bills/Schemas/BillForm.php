@@ -222,33 +222,10 @@ class BillForm
                             })
                             ->visible(fn () => app(\Tek2991\Accounting\Services\CompanyContext::class)->isIndiaGst()),
                             
-                        Forms\Components\Placeholder::make('tax_determination')
-                            ->label('Tax Determination')
-                            ->content(function (\Filament\Schemas\Components\Utilities\Get $get) {
-                                $companyContext = app(\Tek2991\Accounting\Services\CompanyContext::class);
-                                if (!$companyContext->isIndiaGst()) return 'N/A';
-                                
-                                $companyStateId = $companyContext->getProfile()?->state_id;
-                                $companyState = $companyStateId ? \Tek2991\Accounting\Models\State::find($companyStateId)?->name : 'Unknown';
-                                
-                                $posStateId = $get('place_of_supply_state_id');
-                                $posState = $posStateId ? \Tek2991\Accounting\Models\State::find($posStateId)?->name : 'Unknown';
-                                
-                                $type = ($companyStateId && $posStateId && (string)$companyStateId === (string)$posStateId) ? 'Intrastate' : 'Interstate';
-                                
-                                return new \Illuminate\Support\HtmlString(
-                                    "<div class='text-sm space-y-1'>" .
-                                    "<div>Tax Regime: <strong>India GST</strong></div>" .
-                                    "<div>Company State: <strong>{$companyState}</strong></div>" .
-                                    "<div>Place of Supply: <strong>{$posState}</strong></div>" .
-                                    "<div>Supply Type: <strong>{$type}</strong></div>" .
-                                    "</div>"
-                                );
-                            })
-                            ->visible(fn () => app(\Tek2991\Accounting\Services\CompanyContext::class)->isIndiaGst()),
-                            
+
                         Forms\Components\TextInput::make('vendor_reference')
                             ->label('Vendor Invoice #'),
+                            
                             
                         Forms\Components\DatePicker::make('issue_date')
                             ->default(now())
@@ -271,7 +248,8 @@ class BillForm
                             })
                             ->default(fn () => \Tek2991\Accounting\Facades\Accounting::getCurrency())
                             ->searchable()
-                            ->required(),
+                            ->required()
+                            ->live(),
                             
                         Forms\Components\Select::make('tax_computation_mode')
                             ->options([
@@ -301,7 +279,7 @@ class BillForm
                                 $netItemsTotal = $calculateTotals($get)['subtotal'];
                                 $rate = (float) ($get('discount_rate') ?? 0);
                                 $amount = $netItemsTotal * ($rate / 100);
-                                $currency = $get('currency_code') ?? 'USD';
+                                $currency = \Tek2991\Accounting\Enums\CurrencySymbol::getSymbol($get('currency_code') ?? 'USD');
                                 return "Amount: {$currency} " . number_format($amount, 2);
                             }),
                             
@@ -318,6 +296,13 @@ class BillForm
                                 return "Rate: " . number_format($pct, 2) . '%';
                             }),
 
+                        Forms\Components\FileUpload::make('seller_invoice_path')
+                            ->label('Seller Invoice (Optional)')
+                            ->directory('accounting/seller_invoices')
+                            ->acceptedFileTypes(['application/pdf', 'image/jpeg', 'image/png'])
+                            ->maxSize(5120)
+                            ->downloadable(),
+
 
                         Forms\Components\Textarea::make('notes')
                             ->columnSpanFull(),
@@ -331,43 +316,68 @@ class BillForm
                             ->label('')
                             ->content(function ($get, $record) use ($calculateTotals) {
                                 $totals = $calculateTotals($get);
-                                $currency = $get('currency_code') ?? 'USD';
+                                $currency = \Tek2991\Accounting\Enums\CurrencySymbol::getSymbol($get('currency_code') ?? 'USD');
                                 
                                 $format = fn($val) => number_format($val, 2);
                                 
-                                $html = "<table class='w-full text-sm text-right'>";
-                                $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Subtotal</td><td class='py-1'>{$currency} {$format($totals['subtotal'])}</td></tr>";
+                                $html = "<table class='w-full text-sm' style='width: 100%;'>";
+                                $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500' style='text-align: left;'>Subtotal</td><td class='py-1' style='text-align: right; min-width: 100px;'>{$currency} {$format($totals['subtotal'])}</td></tr>";
                                 
                                 if ($totals['line_discounts'] > 0) {
-                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Line Discounts</td><td class='py-1 text-danger-600'>- {$currency} {$format($totals['line_discounts'])}</td></tr>";
-                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Subtotal After Line Disc.</td><td class='py-1'>{$currency} {$format($totals['subtotal_after_line_discounts'])}</td></tr>";
+                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500' style='text-align: left;'>Line Discounts</td><td class='py-1 text-danger-600' style='text-align: right;'>- {$currency} {$format($totals['line_discounts'])}</td></tr>";
+                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500' style='text-align: left;'>Subtotal After Line Disc.</td><td class='py-1' style='text-align: right;'>{$currency} {$format($totals['subtotal_after_line_discounts'])}</td></tr>";
                                 }
                                 
                                 if ($totals['doc_discount'] > 0) {
-                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Bill Discount</td><td class='py-1 text-danger-600'>- {$currency} {$format($totals['doc_discount'])}</td></tr>";
+                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500' style='text-align: left;'>Bill Discount</td><td class='py-1 text-danger-600' style='text-align: right;'>- {$currency} {$format($totals['doc_discount'])}</td></tr>";
                                 }
                                 
-                                $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Net Amount</td><td class='py-1'>{$currency} {$format($totals['net_amount'])}</td></tr>";
-                                $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Taxable Amount</td><td class='py-1'>{$currency} {$format($totals['taxable_amount'])}</td></tr>";
+                                $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500' style='text-align: left;'>Net Amount</td><td class='py-1' style='text-align: right;'>{$currency} {$format($totals['net_amount'])}</td></tr>";
+                                $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500' style='text-align: left;'>Taxable Amount</td><td class='py-1' style='text-align: right;'>{$currency} {$format($totals['taxable_amount'])}</td></tr>";
                                 
                                 if (!empty($totals['tax_breakdown'])) {
                                     foreach ($totals['tax_breakdown'] as $taxName => $taxAmount) {
-                                        $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>{$taxName}</td><td class='py-1'>{$currency} {$format($taxAmount)}</td></tr>";
+                                        $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500' style='text-align: left;'>{$taxName}</td><td class='py-1' style='text-align: right;'>{$currency} {$format($taxAmount)}</td></tr>";
                                     }
                                 } else {
-                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500'>Total Tax</td><td class='py-1'>{$currency} {$format($totals['tax_total'])}</td></tr>";
+                                    $html .= "<tr><td class='py-1 pr-4 font-medium text-gray-500' style='text-align: left;'>Total Tax</td><td class='py-1' style='text-align: right;'>{$currency} {$format($totals['tax_total'])}</td></tr>";
                                 }
                                 
-                                $html .= "<tr class='text-lg font-bold'><td class='py-2 pr-4'>Grand Total</td><td class='py-2'>{$currency} {$format($totals['grand_total'])}</td></tr>";
+                                $html .= "<tr class='text-lg font-bold'><td class='py-2 pr-4' style='text-align: left;'>Grand Total</td><td class='py-2' style='text-align: right;'>{$currency} {$format($totals['grand_total'])}</td></tr>";
                                 
                                 $paid = $record ? (float) $record->amount_paid : 0;
                                 $balanceDue = max(0, $totals['grand_total'] - $paid);
                                 
-                                $html .= "<tr class='text-lg font-bold text-danger-600'><td class='py-2 pr-4'>Balance Due</td><td class='py-2'>{$currency} {$format($balanceDue)}</td></tr>";
+                                $html .= "<tr class='text-lg font-bold text-danger-600'><td class='py-2 pr-4' style='text-align: left;'>Balance Due</td><td class='py-2' style='text-align: right;'>{$currency} {$format($balanceDue)}</td></tr>";
                                 $html .= "</table>";
                                 
                                 return new \Illuminate\Support\HtmlString($html);
                             }),
+                            
+                        Forms\Components\Placeholder::make('tax_determination')
+                            ->label('Tax Determination')
+                            ->content(function (\Filament\Schemas\Components\Utilities\Get $get) {
+                                $companyContext = app(\Tek2991\Accounting\Services\CompanyContext::class);
+                                if (!$companyContext->isIndiaGst()) return 'N/A';
+                                
+                                $companyStateId = $companyContext->getProfile()?->state_id;
+                                $companyState = $companyStateId ? \Tek2991\Accounting\Models\State::find($companyStateId)?->name : 'Unknown';
+                                
+                                $posStateId = $get('place_of_supply_state_id');
+                                $posState = $posStateId ? \Tek2991\Accounting\Models\State::find($posStateId)?->name : 'Unknown';
+                                
+                                $type = ($companyStateId && $posStateId && (string)$companyStateId === (string)$posStateId) ? 'Intrastate' : 'Interstate';
+                                
+                                return new \Illuminate\Support\HtmlString(
+                                    "<div class='text-sm space-y-1'>" .
+                                    "<div>Tax Regime: <strong>India GST</strong></div>" .
+                                    "<div>Company State: <strong>{$companyState}</strong></div>" .
+                                    "<div>Place of Supply: <strong>{$posState}</strong></div>" .
+                                    "<div>Supply Type: <strong>{$type}</strong></div>" .
+                                    "</div>"
+                                );
+                            })
+                            ->visible(fn () => app(\Tek2991\Accounting\Services\CompanyContext::class)->isIndiaGst()),
                     ]),
                     
                 Section::make('Line Items')
@@ -428,6 +438,7 @@ class BillForm
                                     ->columnSpan(3),
                                     
                                 Forms\Components\TextInput::make('quantity')
+                                    ->label('Qty')
                                     ->numeric()
                                     ->default(1)
                                     ->required()
@@ -439,14 +450,14 @@ class BillForm
                                     ->label(function ($get) {
                                         $base = $get('line_type') === 'account' ? 'Amount' : 'Unit Price';
                                         $mode = $get('../../tax_computation_mode') ?? 'exclusive';
-                                        if ($mode === 'inclusive') return $base . ' (Tax Inclusive)';
-                                        if ($mode === 'exclusive') return $base . ' (Tax Exclusive)';
+                                        if ($mode === 'inclusive') return $base . ' (Tax Incl.)';
+                                        if ($mode === 'exclusive') return $base . ' (Tax Excl.)';
                                         return $base;
                                     })
                                     ->numeric()
                                     ->required()
                                     ->reactive()
-                                    ->columnSpan(2),
+                                    ->columnSpan(3),
                                     
                                 Forms\Components\Select::make('tax_id')
                                     ->relationship('tax', 'name')
@@ -512,7 +523,51 @@ class BillForm
                                 Forms\Components\Hidden::make('tax_snapshot_hidden')
                                     ->dehydrated(false),
                                     
+                                Forms\Components\Select::make('discount_type')
+                                    ->options([
+                                        \Tek2991\Accounting\Enums\DiscountType::Percentage->value => 'Percentage',
+                                        \Tek2991\Accounting\Enums\DiscountType::Fixed->value => 'Fixed',
+                                    ])
+                                    ->default(\Tek2991\Accounting\Enums\DiscountType::Percentage->value)
+                                    ->reactive()
+                                    ->columnSpan(3),
+                                    
+                                Forms\Components\TextInput::make('discount_rate')
+                                    ->label('Discount %')
+                                    ->numeric()
+                                    ->default(0)
+                                    ->reactive()
+                                    ->columnSpan(3)
+                                    ->visible(fn ($get) => $get('discount_type') === \Tek2991\Accounting\Enums\DiscountType::Percentage->value)
+                                    ->helperText(function ($get) {
+                                        $qty = (float) ($get('quantity') ?? 0);
+                                        $price = (float) ($get('unit_price') ?? 0);
+                                        $baseTotal = $qty * $price;
+                                        $amount = $baseTotal * ((float) ($get('discount_rate') ?? 0) / 100);
+                                        if ($amount <= 0) return null;
+                                        $currency = \Tek2991\Accounting\Enums\CurrencySymbol::getSymbol($get('../../currency_code') ?? 'USD');
+                                        return "Discount Amount: {$currency} " . number_format($amount, 2);
+                                    }),
+                                    
+                                Forms\Components\TextInput::make('discount_amount')
+                                    ->label('Discount Amount')
+                                    ->numeric()
+                                    ->default(0)
+                                    ->reactive()
+                                    ->columnSpan(3)
+                                    ->visible(fn ($get) => $get('discount_type') === \Tek2991\Accounting\Enums\DiscountType::Fixed->value)
+                                    ->helperText(function ($get) {
+                                        $qty = (float) ($get('quantity') ?? 0);
+                                        $price = (float) ($get('unit_price') ?? 0);
+                                        $baseTotal = $qty * $price;
+                                        $amount = (float) ($get('discount_amount') ?? 0);
+                                        if ($amount <= 0) return null;
+                                        $pct = $baseTotal > 0 ? ($amount / $baseTotal) * 100 : 0;
+                                        return "Discount Rate: " . number_format($pct, 2) . '%';
+                                    }),
+                                    
                                 Forms\Components\Placeholder::make('line_total')
+                                    ->label('Line Total')
                                     ->content(function ($get) use ($getTaxType) {
                                         $qty = (float) ($get('quantity') ?? 0);
                                         $price = (float) ($get('unit_price') ?? 0);
@@ -533,7 +588,9 @@ class BillForm
                                             $docMode = $get('../../tax_computation_mode') ?? 'exclusive';
                                             
                                             if ($docMode === 'manual') {
-                                                // Pre-tax is just discounted line total
+                                                foreach ($get('tax_snapshot') ?? [] as $comp) {
+                                                    $itemTaxAmount += (float) ($comp['amount'] ?? 0);
+                                                }
                                             } else {
                                                 $isInclusive = $docMode === 'inclusive';
                                                 $rateSum = 0;
@@ -542,54 +599,24 @@ class BillForm
                                                 }
                                                 if ($isInclusive) {
                                                     $itemTaxAmount = $discountedLineTotal * ($rateSum / (100 + $rateSum));
+                                                } else {
+                                                    $itemTaxAmount = $discountedLineTotal * ($rateSum / 100);
                                                 }
                                             }
                                         }
                                         
-                                        $itemPreTaxTotal = $isInclusive ? ($discountedLineTotal - $itemTaxAmount) : $discountedLineTotal;
-                                        return number_format($itemPreTaxTotal, 2);
+                                        $lineTotalWithTax = $discountedLineTotal + ($isInclusive ? 0 : $itemTaxAmount);
+                                        $currency = \Tek2991\Accounting\Enums\CurrencySymbol::getSymbol($get('../../currency_code') ?? 'USD');
+                                        
+                                        $html = "<div class='text-right'><div class='text-lg font-bold'>{$currency} " . number_format($lineTotalWithTax, 2) . "</div>";
+                                        if ($itemTaxAmount > 0) {
+                                            $taxText = $isInclusive ? 'Incl. Tax' : '+ Tax';
+                                            $html .= "<div class='text-xs text-gray-500'>{$taxText}: {$currency} " . number_format($itemTaxAmount, 2) . "</div>";
+                                        }
+                                        $html .= "</div>";
+                                        return new \Illuminate\Support\HtmlString($html);
                                     })
-                                    ->columnSpan(1),
-                                    
-                                Forms\Components\Select::make('discount_type')
-                                    ->options([
-                                        \Tek2991\Accounting\Enums\DiscountType::Percentage->value => 'Percentage',
-                                        \Tek2991\Accounting\Enums\DiscountType::Fixed->value => 'Fixed',
-                                    ])
-                                    ->default(\Tek2991\Accounting\Enums\DiscountType::Percentage->value)
-                                    ->reactive()
-                                    ->columnSpan(2),
-                                    
-                                Forms\Components\TextInput::make('discount_rate')
-                                    ->label('Discount %')
-                                    ->numeric()
-                                    ->default(0)
-                                    ->reactive()
-                                    ->columnSpan(2)
-                                    ->visible(fn ($get) => $get('discount_type') === \Tek2991\Accounting\Enums\DiscountType::Percentage->value)
-                                    ->helperText(function ($get) {
-                                        $qty = (float) ($get('quantity') ?? 0);
-                                        $price = (float) ($get('unit_price') ?? 0);
-                                        $baseTotal = $qty * $price;
-                                        $amount = $baseTotal * ((float) ($get('discount_rate') ?? 0) / 100);
-                                        return '=' . number_format($amount, 2);
-                                    }),
-                                    
-                                Forms\Components\TextInput::make('discount_amount')
-                                    ->label('Discount Amount')
-                                    ->numeric()
-                                    ->default(0)
-                                    ->reactive()
-                                    ->columnSpan(2)
-                                    ->visible(fn ($get) => $get('discount_type') === \Tek2991\Accounting\Enums\DiscountType::Fixed->value)
-                                    ->helperText(function ($get) {
-                                        $qty = (float) ($get('quantity') ?? 0);
-                                        $price = (float) ($get('unit_price') ?? 0);
-                                        $baseTotal = $qty * $price;
-                                        $amount = (float) ($get('discount_amount') ?? 0);
-                                        $pct = $baseTotal > 0 ? ($amount / $baseTotal) * 100 : 0;
-                                        return '=' . number_format($pct, 2) . '%';
-                                    }),
+                                    ->columnSpan(6),
 
                             ])
                             ->defaultItems(1)
