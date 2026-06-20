@@ -44,7 +44,8 @@ class CreditNoteResource extends Resource
             ])
             ->actions([
                 \Filament\Actions\ViewAction::make(),
-                \Filament\Actions\EditAction::make(),
+                \Filament\Actions\EditAction::make()
+                    ->visible(fn (\Tek2991\Accounting\Models\CreditNote $record) => $record->status === \Tek2991\Accounting\Enums\CreditNoteStatus::Draft),
             ]);
     }
 

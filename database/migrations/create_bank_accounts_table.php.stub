@@ -38,11 +38,27 @@ return new class extends Migration
             $table->index('type', "{$prefix}bank_accounts_type_idx");
             $table->index('enabled', "{$prefix}bank_accounts_enabled_idx");
         });
+
+        Schema::table("{$prefix}transactions", function (Blueprint $table) use ($prefix) {
+            $table->foreignId('bank_account_id')
+                ->nullable()
+                ->after('account_id')
+                ->constrained("{$prefix}bank_accounts")
+                ->nullOnDelete();
+
+            $table->index('bank_account_id', "{$prefix}txn_bank_account_idx");
+        });
     }
 
     public function down(): void
     {
         $prefix = $this->prefix();
+
+        Schema::table("{$prefix}transactions", function (Blueprint $table) use ($prefix) {
+            $table->dropForeign(['bank_account_id']);
+            $table->dropIndex("{$prefix}txn_bank_account_idx");
+            $table->dropColumn('bank_account_id');
+        });
 
         Schema::dropIfExists("{$prefix}bank_accounts");
     }

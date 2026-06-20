@@ -5,6 +5,7 @@ namespace Tek2991\Accounting\Filament\Resources\Purchases\DebitNotes\Schemas;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Placeholder;
 use Filament\Schemas\Components\Grid;
@@ -94,6 +95,17 @@ class DebitNoteForm
             Section::make('Debit Note Details')
                 ->columnSpan(1)
                 ->schema([
+                    Radio::make('source_type')
+                        ->label('Source Type')
+                        ->options([
+                            'against_bill' => 'Against Existing Bill',
+                            'standalone' => 'Standalone Adjustment',
+                        ])
+                        ->default(fn (Get $get) => filled(request()->query('bill_id')) || filled($get('bill_id')) ? 'against_bill' : 'standalone')
+                        ->reactive()
+                        ->dehydrated(false)
+                        ->disabled(fn (?\Tek2991\Accounting\Models\DebitNote $record) => $record && $record->exists),
+
                     Select::make('contact_id')
                         ->label('Vendor')
                         ->relationship('contact', 'name', fn ($query) => $query->whereIn('type', [\Tek2991\Accounting\Enums\ContactType::Vendor, \Tek2991\Accounting\Enums\ContactType::Both]))
@@ -101,22 +113,33 @@ class DebitNoteForm
                         ->required()
                         ->default(request()->query('contact_id'))
                         ->reactive()
+                        ->disabled(fn (Get $get, ?\Tek2991\Accounting\Models\DebitNote $record) => ($record && $record->exists && filled($get('bill_id'))) || ($get('source_type') === 'against_bill' && filled($get('bill_id')) && $record && $record->exists))
                         ->afterStateUpdated(fn (Set $set) => $set('bill_id', null)),
                         
                     Select::make('bill_id')
                         ->label('Bill')
                         ->options(fn (Get $get) => Bill::where('contact_id', $get('contact_id'))->pluck('bill_number', 'id'))
                         ->searchable()
-                        ->required()
+                        ->required(fn (Get $get) => $get('source_type') === 'against_bill')
+                        ->visible(fn (Get $get) => $get('source_type') === 'against_bill')
                         ->default(request()->query('bill_id'))
+                        ->disabled(fn (?\Tek2991\Accounting\Models\DebitNote $record) => $record && $record->exists)
                         ->reactive(),
 
                     DatePicker::make('issue_date')
                         ->default(now())
                         ->required(),
                         
-                    TextInput::make('reason')
-                        ->maxLength(255),
+                    Select::make('reason')
+                        ->options([
+                            'Goods Returned' => 'Goods Returned',
+                            'Quantity Shortage' => 'Quantity Shortage',
+                            'Pricing Correction' => 'Pricing Correction',
+                            'Commercial Settlement' => 'Commercial Settlement',
+                            'Volume Rebate' => 'Volume Rebate',
+                            'Other' => 'Other',
+                        ])
+                        ->required(fn (Get $get) => blank($get('bill_id'))),
                 ]),
 
             Section::make('Summary')
@@ -162,6 +185,7 @@ class DebitNoteForm
                                 ->options(Item::pluck('name', 'id'))
                                 ->searchable()
                                 ->reactive()
+                                ->disabled(fn (Get $get) => filled($get('../../bill_id')))
                                 ->afterStateUpdated(function ($state, Set $set) {
                                     if ($item = Item::find($state)) {
                                         $set('description', $item->description);
@@ -172,6 +196,7 @@ class DebitNoteForm
                                 
                             TextInput::make('description')
                                 ->required()
+                                ->disabled(fn (Get $get) => filled($get('../../bill_id')))
                                 ->maxLength(500),
                                 
                             TextInput::make('quantity')
@@ -183,12 +208,14 @@ class DebitNoteForm
                             TextInput::make('unit_price')
                                 ->numeric()
                                 ->reactive()
+                                ->disabled(fn (Get $get) => filled($get('../../bill_id')))
                                 ->required(),
                                 
                             Select::make('tax_id')
                                 ->label('Tax')
                                 ->options(Tax::pluck('name', 'id'))
                                 ->reactive()
+                                ->disabled(fn (Get $get) => filled($get('../../bill_id')))
                                 ->searchable(),
                         ])
                         ->columns(5)

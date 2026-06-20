@@ -74,10 +74,13 @@ return new class extends Migration
             $table->boolean('reviewed')->default(false);
             $table->boolean('allow_reversal')->default(true);
             $table->date('posted_at')->nullable();
+            $table->string('voucherable_type', 100)->nullable();
+            $table->unsignedBigInteger('voucherable_id')->nullable();
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('updated_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
 
+            $table->index(['voucherable_type', 'voucherable_id'], "{$prefix}txn_voucherable_idx");
             $table->index('company_id', "{$prefix}txn_company_idx");
             $table->index('account_id', "{$prefix}txn_account_idx");
             $table->index('type', "{$prefix}txn_type_idx");

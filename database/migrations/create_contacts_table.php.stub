@@ -27,6 +27,15 @@ return new class extends Migration
             
             $table->string('tax_id')->nullable(); // GSTIN, VAT number, etc.
             
+            $table->foreignId('state_id')
+                  ->nullable()
+                  ->constrained("{$prefix}states")
+                  ->nullOnDelete();
+            
+            $table->boolean('is_tax_registered')->default(false);
+            $table->string('gstin', 15)->nullable();
+            $table->string('gst_registration_type')->nullable();
+            
             $table->text('billing_address')->nullable();
             $table->text('shipping_address')->nullable();
             

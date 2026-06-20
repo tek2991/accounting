@@ -82,7 +82,30 @@ class InvoicesTable
                     }),
             ])
             ->groupedBulkActions([
-                Actions\DeleteBulkAction::make(),
+                Actions\BulkAction::make('delete')
+                    ->label('Delete Selected')
+                    ->icon('heroicon-o-trash')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->action(function (\Illuminate\Database\Eloquent\Collection $records) {
+                        $skipped = 0;
+                        foreach ($records as $record) {
+                            if ($record->status === InvoiceStatus::Draft) {
+                                $record->delete();
+                            } else {
+                                $skipped++;
+                            }
+                        }
+                        
+                        if ($skipped > 0) {
+                            \Filament\Notifications\Notification::make()
+                                ->warning()
+                                ->title("{$skipped} posted document(s) could not be deleted.")
+                                ->body('Posted documents are immutable and must be cancelled instead.')
+                                ->send();
+                        }
+                    })
+                    ->deselectRecordsAfterCompletion(),
             ]);
     }
 }

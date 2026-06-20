@@ -27,36 +27,27 @@ class AccountingServiceProvider extends PackageServiceProvider
             ->name('accounting')
             ->hasConfigFile()
             ->hasMigrations([
-                'create_accounting_tables',
+                'create_states_table',
+                'create_company_profiles_table',
                 'create_accounting_settings_table',
-                'create_bank_accounts_table',
-                'add_bank_account_to_transactions_table',
-                'add_voucherable_to_acc_transactions_table',
-                'add_document_settings_to_acc_settings_table',
-                'create_items_table',
                 'create_contacts_table',
+                'create_accounting_tables',
+                'create_bank_accounts_table',
+                'create_items_table',
                 'create_taxes_table',
-                'add_invoice_numbers_to_settings_table',
                 'create_invoices_table',
                 'create_invoice_items_table',
                 'create_bills_table',
                 'create_bill_items_table',
                 'create_payments_table',
                 'create_fiscal_periods_table',
-                'add_cn_dn_settings_to_acc_settings_table',
                 'create_credit_notes_table',
                 'create_credit_note_items_table',
                 'create_debit_notes_table',
                 'create_debit_note_items_table',
-                'add_discount_fields_to_items_tables',
-                'create_states_table',
-                'create_company_profiles_table',
-                'add_gst_fields_to_contacts_table',
-                'add_type_to_tax_components_table',
-                'add_place_of_supply_to_documents_tables',
-                'add_seller_invoice_path_to_bills_table',
             ])
             ->hasViews('accounting')
+            ->hasRoute('web')
             ->hasTranslations();
     }
 

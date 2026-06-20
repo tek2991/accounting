@@ -15,7 +15,8 @@ class EditDebitNote extends EditRecord
     {
         return [
             Actions\ViewAction::make(),
-            Actions\DeleteAction::make(),
+            Actions\DeleteAction::make()
+                ->visible(fn ($record) => $record->status === \Tek2991\Accounting\Enums\DebitNoteStatus::Draft),
         ];
     }
     

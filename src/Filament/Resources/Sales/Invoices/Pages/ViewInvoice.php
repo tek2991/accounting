@@ -75,7 +75,14 @@ class ViewInvoice extends ViewRecord
                 Actions\Action::make('issue_credit_note')
                     ->label('Issue Credit Note')
                     ->icon('heroicon-o-document-minus')
-                    ->url(fn ($record) => \Tek2991\Accounting\Filament\Resources\Sales\CreditNotes\CreditNoteResource::getUrl('create') . '?invoice_id=' . $record->id . '&contact_id=' . $record->contact_id)
+                    ->action(function ($record) {
+                        $quantities = [];
+                        foreach ($record->items as $item) {
+                            $quantities[$item->id] = $item->quantity;
+                        }
+                        $cn = app(\Tek2991\Accounting\Services\CreditNoteService::class)->createFromInvoice($record, $quantities);
+                        return redirect(\Tek2991\Accounting\Filament\Resources\Sales\CreditNotes\CreditNoteResource::getUrl('edit', ['record' => $cn->id]));
+                    })
             ])->label('More')->icon('heroicon-m-ellipsis-vertical'),
         ];
     }

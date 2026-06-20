@@ -5,6 +5,7 @@ namespace Tek2991\Accounting\Filament\Resources\Sales\CreditNotes\Schemas;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Placeholder;
 use Filament\Schemas\Components\Grid;
@@ -97,6 +98,17 @@ class CreditNoteForm
             Section::make('Credit Note Details')
                 ->columnSpan(1)
                 ->schema([
+                    Radio::make('source_type')
+                        ->label('Source Type')
+                        ->options([
+                            'against_invoice' => 'Against Existing Invoice',
+                            'standalone' => 'Standalone Adjustment',
+                        ])
+                        ->default(fn (Get $get) => filled(request()->query('invoice_id')) || filled($get('invoice_id')) ? 'against_invoice' : 'standalone')
+                        ->reactive()
+                        ->dehydrated(false)
+                        ->disabled(fn (?\Tek2991\Accounting\Models\CreditNote $record) => $record && $record->exists),
+
                     Select::make('contact_id')
                         ->label('Customer')
                         ->relationship('contact', 'name', fn ($query) => $query->whereIn('type', [\Tek2991\Accounting\Enums\ContactType::Customer, \Tek2991\Accounting\Enums\ContactType::Both]))
@@ -104,22 +116,33 @@ class CreditNoteForm
                         ->required()
                         ->default(request()->query('contact_id'))
                         ->reactive()
+                        ->disabled(fn (Get $get, ?\Tek2991\Accounting\Models\CreditNote $record) => ($record && $record->exists && filled($get('invoice_id'))) || ($get('source_type') === 'against_invoice' && filled($get('invoice_id')) && $record && $record->exists))
                         ->afterStateUpdated(fn (Set $set) => $set('invoice_id', null)),
                         
                     Select::make('invoice_id')
                         ->label('Invoice')
                         ->options(fn (Get $get) => Invoice::where('contact_id', $get('contact_id'))->pluck('invoice_number', 'id'))
                         ->searchable()
-                        ->required()
+                        ->required(fn (Get $get) => $get('source_type') === 'against_invoice')
+                        ->visible(fn (Get $get) => $get('source_type') === 'against_invoice')
                         ->default(request()->query('invoice_id'))
+                        ->disabled(fn (?\Tek2991\Accounting\Models\CreditNote $record) => $record && $record->exists)
                         ->reactive(),
 
                     DatePicker::make('issue_date')
                         ->default(now())
                         ->required(),
                         
-                    TextInput::make('reason')
-                        ->maxLength(255),
+                    Select::make('reason')
+                        ->options([
+                            'Goods Returned' => 'Goods Returned',
+                            'Quantity Shortage' => 'Quantity Shortage',
+                            'Pricing Correction' => 'Pricing Correction',
+                            'Commercial Settlement' => 'Commercial Settlement',
+                            'Volume Rebate' => 'Volume Rebate',
+                            'Other' => 'Other',
+                        ])
+                        ->required(fn (Get $get) => blank($get('invoice_id'))),
                 ]),
 
             Section::make('Summary')
@@ -165,6 +188,7 @@ class CreditNoteForm
                                 ->options(Item::pluck('name', 'id'))
                                 ->searchable()
                                 ->reactive()
+                                ->disabled(fn (Get $get) => filled($get('../../invoice_id')))
                                 ->afterStateUpdated(function ($state, Set $set) {
                                     if ($item = Item::find($state)) {
                                         $set('description', $item->description);
@@ -175,6 +199,7 @@ class CreditNoteForm
                                 
                             TextInput::make('description')
                                 ->required()
+                                ->disabled(fn (Get $get) => filled($get('../../invoice_id')))
                                 ->maxLength(500),
                                 
                             TextInput::make('quantity')
@@ -186,12 +211,14 @@ class CreditNoteForm
                             TextInput::make('unit_price')
                                 ->numeric()
                                 ->reactive()
+                                ->disabled(fn (Get $get) => filled($get('../../invoice_id')))
                                 ->required(),
                                 
                             Select::make('tax_id')
                                 ->label('Tax')
                                 ->options(Tax::pluck('name', 'id'))
                                 ->reactive()
+                                ->disabled(fn (Get $get) => filled($get('../../invoice_id')))
                                 ->searchable(),
                         ])
                         ->columns(5)

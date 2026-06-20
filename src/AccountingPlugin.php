@@ -18,6 +18,13 @@ use Tek2991\Accounting\Filament\Resources\Sales\CreditNotes\CreditNoteResource;
 use Tek2991\Accounting\Filament\Resources\Purchases\DebitNotes\DebitNoteResource;
 use Tek2991\Accounting\Filament\Resources\Settings\FiscalPeriods\FiscalPeriodResource;
 use Tek2991\Accounting\Filament\Widgets\AccountBalanceOverview;
+use Tek2991\Accounting\Filament\Pages\Reports\BalanceSheet;
+use Tek2991\Accounting\Filament\Pages\Reports\ProfitAndLoss;
+use Tek2991\Accounting\Filament\Pages\Reports\TrialBalance;
+use Tek2991\Accounting\Filament\Pages\Reports\TaxSummary;
+use Tek2991\Accounting\Filament\Pages\Reports\AccountLedger;
+use Tek2991\Accounting\Filament\Pages\Reports\VendorLedger;
+use Tek2991\Accounting\Filament\Pages\Reports\CustomerLedger;
 
 class AccountingPlugin implements Plugin
 {
@@ -25,7 +32,7 @@ class AccountingPlugin implements Plugin
 
     protected bool $hasWidgets = true;
 
-    protected bool $hasReports = false; // Phase 3 — not yet built
+    protected bool $hasReports = true;
 
     protected bool $hasBanking = true;
 
@@ -124,6 +131,18 @@ class AccountingPlugin implements Plugin
             $pages[] = AccountChart::class;
         }
 
+        if ($this->hasReports) {
+            $pages = array_merge($pages, [
+                BalanceSheet::class,
+                ProfitAndLoss::class,
+                TrialBalance::class,
+                TaxSummary::class,
+                AccountLedger::class,
+                VendorLedger::class,
+                CustomerLedger::class,
+            ]);
+        }
+
         $panel->pages($pages);
 
         // ── Widgets ───────────────────────────────────────────────
@@ -138,6 +157,7 @@ class AccountingPlugin implements Plugin
             'Purchases',
             'Banking',
             'Accounting',
+            'Reports',
             'Catalog',
             'Settings',
         ]);

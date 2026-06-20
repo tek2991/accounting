@@ -110,6 +110,7 @@ class TransactionsTable
                         }),
 
                     Actions\EditAction::make()
+                        ->visible(fn (Transaction $record) => !$record->isPosted())
                         ->form(fn (Transaction $record) => TransactionForm::getDynamicFormSchema($record))
                         ->mutateRecordDataUsing(fn (array $data, Transaction $record) => TransactionForm::mutateRecordDataForForm($data, $record))
                         ->using(function (Transaction $record, array $data) {
@@ -192,7 +193,31 @@ class TransactionsTable
                 ]),
             ])
             ->groupedBulkActions([
-                Actions\DeleteBulkAction::make(),
+                Actions\BulkAction::make('delete')
+                    ->label('Delete Selected')
+                    ->icon('heroicon-o-trash')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->action(function (\Illuminate\Database\Eloquent\Collection $records) {
+                        $skipped = 0;
+                        foreach ($records as $record) {
+                            if (!$record->isPosted()) {
+                                $record->journalEntries()->delete();
+                                $record->delete();
+                            } else {
+                                $skipped++;
+                            }
+                        }
+                        
+                        if ($skipped > 0) {
+                            \Filament\Notifications\Notification::make()
+                                ->warning()
+                                ->title("{$skipped} posted transaction(s) could not be deleted.")
+                                ->body('Posted transactions are immutable and must be reversed instead.')
+                                ->send();
+                        }
+                    })
+                    ->deselectRecordsAfterCompletion(),
             ]);
     }
 }

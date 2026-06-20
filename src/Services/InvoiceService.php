@@ -311,10 +311,10 @@ class InvoiceService
             $invoice->payments()->save($payment);
 
             // Update invoice amounts
-            $newPaid = ($invoice->getAttributes()['amount_paid'] ?? 0) + $paymentAmount;
+            $newPaid = $invoice->amount_paid + $paymentAmount;
             $newBalance = $invoice->grand_total - $newPaid;
 
-            $invoice->amount_paid = $newPaid / 100;
+            $invoice->amount_paid = $newPaid;
             $invoice->balance_due = $newBalance;
 
             if ($newBalance <= 0) {
@@ -347,17 +347,15 @@ class InvoiceService
             
             // Reverse transaction
             if ($invoice->transaction_id) {
-                // Simplified reversal: In a real system, you'd create a reversing transaction.
-                // For MVP, we might just mark transaction as cancelled if supported, or create reverse entries.
-                // Assuming TransactionService has a reverse method, or we just delete it.
-                $this->txnService->deleteTransaction($invoice->transaction);
+                $this->txnService->reverseTransaction($invoice->transaction, "Reversal of Cancelled Invoice {$invoice->invoice_number}");
             }
 
             foreach ($invoice->payments as $payment) {
                 if ($payment->transaction_id) {
-                    $this->txnService->deleteTransaction($payment->transaction);
+                    $this->txnService->reverseTransaction($payment->transaction, "Reversal of Cancelled Payment {$payment->id}");
                 }
-                $payment->delete();
+                // We should also ideally mark the payment as cancelled if it has a status column.
+                // Assuming no status on payment, we just leave it with reversed transaction.
             }
 
             $invoice->status = InvoiceStatus::Cancelled;

@@ -36,6 +36,7 @@ return new class extends Migration
                   ->cascadeOnDelete();
                   
             $table->string('name'); // e.g. CGST
+            $table->string('type')->default('generic'); // intrastate, interstate, union_territory, generic
             
             // Storing percentage as decimal. E.g. 9.0000
             $table->decimal('rate', 8, 4);

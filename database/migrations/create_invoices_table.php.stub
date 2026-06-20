@@ -40,6 +40,11 @@ return new class extends Migration
             
             $table->json('billing_address_snapshot')->nullable();
             
+            $table->foreignId('place_of_supply_state_id')
+                  ->nullable()
+                  ->constrained("{$prefix}states")
+                  ->nullOnDelete();
+            
             $table->text('notes')->nullable();
             $table->text('terms')->nullable();
             

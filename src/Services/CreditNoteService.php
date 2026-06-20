@@ -28,48 +28,124 @@ class CreditNoteService
         });
     }
 
+    public function createFromInvoice(\Tek2991\Accounting\Models\Invoice $invoice, array $quantitiesToReturn): CreditNote
+    {
+        return DB::transaction(function () use ($invoice, $quantitiesToReturn) {
+            $cn = new CreditNote([
+                'contact_id' => $invoice->contact_id,
+                'invoice_id' => $invoice->id,
+                'issue_date' => now(),
+            ]);
+            $cn->company_id = $invoice->company_id;
+            $cn->credit_note_number = $this->docNumberService->nextCreditNoteNumber($invoice->company_id);
+            $cn->status = CreditNoteStatus::Draft;
+            $cn->save();
+
+            foreach ($invoice->items as $origItem) {
+                $returnQty = $quantitiesToReturn[$origItem->id] ?? 0;
+                if ($returnQty > 0) {
+                    $cn->items()->create([
+                        'item_id' => $origItem->item_id,
+                        'sort_order' => $origItem->sort_order,
+                        'description' => $origItem->description,
+                        'hsn_sac_code' => $origItem->hsn_sac_code,
+                        'quantity' => $returnQty,
+                        'unit_price' => $origItem->unit_price,
+                        'tax_id' => $origItem->tax_id,
+                    ]);
+                }
+            }
+
+            $this->recalculateTotals($cn);
+
+            return $cn;
+        });
+    }
+
     public function recalculateTotals(CreditNote $cn): void
     {
         $subtotal = 0;
         $taxTotal = 0;
 
-        foreach ($cn->items as $item) {
-            // Line total = qty * unit_price
-            $qty = ($item->getAttributes()['quantity'] ?? 0);
-            if (empty($qty) || $qty == 0) {
-                $qty = 1;
-            }
-            $baseLineTotal = $qty * ($item->getAttributes()['unit_price'] ?? 0);
-            
-            // Calculate Tax
-            $itemTaxAmount = 0;
-            $isInclusive = false;
-            
-            if ($item->tax_id) {
-                $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
-                if ($tax) {
-                    $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
-                    $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax, null, 'sales');
-                    $itemTaxAmount = $taxComponents->sum('amount');
-                    $item->tax_snapshot = $taxComponents->toArray();
-                }
-            }
-            
-            // Determine item's pre-tax line total
-            $itemPreTaxTotal = $isInclusive ? ($baseLineTotal - $itemTaxAmount) : $baseLineTotal;
-            
-            $item->gross_amount = $baseLineTotal / 100;
-            $item->line_discount_amount = 0;
-            $item->allocated_document_discount = 0;
-            $item->net_amount = $baseLineTotal / 100;
-            
-            $item->line_total = $itemPreTaxTotal / 100;
-            $item->tax_amount = $itemTaxAmount / 100;
-            
-            $item->save();
+        $isLinkedToInvoice = $cn->invoice_id !== null;
+        if ($isLinkedToInvoice) {
+            $cn->loadMissing('invoice.items');
+            $invoiceItems = $cn->invoice->items->keyBy('sort_order');
+        }
 
-            $subtotal += $itemPreTaxTotal;
-            $taxTotal += $itemTaxAmount;
+        foreach ($cn->items as $item) {
+            $qty = ($item->getAttributes()['quantity'] ?? 0);
+            
+            if ($isLinkedToInvoice && isset($invoiceItems[$item->sort_order])) {
+                $origItem = $invoiceItems[$item->sort_order];
+                $origQty = $origItem->getAttributes()['quantity'] ?? 1;
+                if ($origQty == 0) $origQty = 1;
+                
+                $proportion = $qty / $origQty;
+
+                $origGross = $origItem->getAttributes()['gross_amount'] ?? 0;
+                $origLineDiscount = $origItem->getAttributes()['line_discount_amount'] ?? 0;
+                $origAllocDiscount = $origItem->getAttributes()['allocated_document_discount'] ?? 0;
+                $origNetAmount = $origItem->getAttributes()['net_amount'] ?? 0;
+                $origLineTotal = $origItem->getAttributes()['line_total'] ?? 0;
+                $origTaxAmount = $origItem->getAttributes()['tax_amount'] ?? 0;
+
+                $item->gross_amount = round($origGross * $proportion) / 100;
+                $item->line_discount_amount = round($origLineDiscount * $proportion) / 100;
+                $item->allocated_document_discount = round($origAllocDiscount * $proportion) / 100;
+                $item->net_amount = round($origNetAmount * $proportion) / 100;
+                $item->line_total = round($origLineTotal * $proportion) / 100;
+                $item->tax_amount = round($origTaxAmount * $proportion) / 100;
+
+                $scaledSnapshot = [];
+                if ($origItem->tax_snapshot) {
+                    foreach ($origItem->tax_snapshot as $taxComp) {
+                        $compAmount = round($taxComp['amount'] * $proportion);
+                        $scaledSnapshot[] = [
+                            'account_id' => $taxComp['account_id'],
+                            'amount' => $compAmount,
+                        ];
+                    }
+                }
+                $item->tax_snapshot = $scaledSnapshot;
+                $item->save();
+
+                $subtotal += ($item->getAttributes()['line_total'] ?? 0);
+                $taxTotal += ($item->getAttributes()['tax_amount'] ?? 0);
+            } else {
+                if (empty($qty) || $qty == 0) {
+                    $qty = 1;
+                }
+                $baseLineTotal = $qty * ($item->getAttributes()['unit_price'] ?? 0);
+                
+                $itemTaxAmount = 0;
+                $isInclusive = false;
+                
+                if ($item->tax_id) {
+                    $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
+                    if ($tax) {
+                        $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
+                        $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax, null, 'sales');
+                        $itemTaxAmount = $taxComponents->sum('amount');
+                        $item->tax_snapshot = $taxComponents->toArray();
+                    }
+                }
+                
+                $itemPreTaxTotal = $isInclusive ? ($baseLineTotal - $itemTaxAmount) : $baseLineTotal;
+                
+                $item->gross_amount = $baseLineTotal / 100;
+                $item->line_discount_amount = 0;
+                $item->allocated_document_discount = 0;
+                $item->net_amount = $baseLineTotal / 100;
+                
+                $item->line_total = $itemPreTaxTotal / 100;
+                $item->tax_amount = $itemTaxAmount / 100;
+                
+                $item->save();
+
+                $subtotal += $itemPreTaxTotal;
+                $taxTotal += $itemTaxAmount;
+            }
         }
 
         $cn->subtotal = $subtotal / 100;

@@ -97,6 +97,9 @@ class AccountService
         $journalTable = config('accounting.table_prefix', 'acc_') . 'journal_entries';
         $transactionTable = config('accounting.table_prefix', 'acc_') . 'transactions';
 
+        $start = \Illuminate\Support\Carbon::parse($startDate)->startOfDay();
+        $end = \Illuminate\Support\Carbon::parse($endDate)->endOfDay();
+
         $query = DB::table($journalTable)
             ->join($transactionTable, "{$journalTable}.transaction_id", '=', "{$transactionTable}.id")
             ->select(
@@ -107,9 +110,9 @@ class AccountService
             ->whereNotNull("{$transactionTable}.posted_at");
 
         if ($excludeEndDate) {
-            $query->where("{$transactionTable}.posted_at", '<', $endDate);
+            $query->where("{$transactionTable}.posted_at", '<', \Illuminate\Support\Carbon::parse($endDate)->startOfDay());
         } else {
-            $query->whereBetween("{$transactionTable}.posted_at", [$startDate, $endDate]);
+            $query->whereBetween("{$transactionTable}.posted_at", [$start, $end]);
         }
 
         if ($accountIds !== null) {

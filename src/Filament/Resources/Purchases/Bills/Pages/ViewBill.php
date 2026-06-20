@@ -79,7 +79,14 @@ class ViewBill extends ViewRecord
                 Actions\Action::make('issue_debit_note')
                     ->label('Issue Debit Note')
                     ->icon('heroicon-o-document-minus')
-                    ->url(fn ($record) => \Tek2991\Accounting\Filament\Resources\Purchases\DebitNotes\DebitNoteResource::getUrl('create') . '?bill_id=' . $record->id . '&contact_id=' . $record->contact_id)
+                    ->action(function ($record) {
+                        $quantities = [];
+                        foreach ($record->items as $item) {
+                            $quantities[$item->id] = $item->quantity;
+                        }
+                        $dn = app(\Tek2991\Accounting\Services\DebitNoteService::class)->createFromBill($record, $quantities);
+                        return redirect(\Tek2991\Accounting\Filament\Resources\Purchases\DebitNotes\DebitNoteResource::getUrl('edit', ['record' => $dn->id]));
+                    })
             ])->label('More')->icon('heroicon-m-ellipsis-vertical'),
         ];
     }

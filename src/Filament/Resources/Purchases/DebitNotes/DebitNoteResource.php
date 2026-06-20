@@ -44,7 +44,8 @@ class DebitNoteResource extends Resource
             ])
             ->actions([
                 \Filament\Actions\ViewAction::make(),
-                \Filament\Actions\EditAction::make(),
+                \Filament\Actions\EditAction::make()
+                    ->visible(fn (\Tek2991\Accounting\Models\DebitNote $record) => $record->status === \Tek2991\Accounting\Enums\DebitNoteStatus::Draft),
             ]);
     }
 

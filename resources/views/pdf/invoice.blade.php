@@ -281,7 +281,14 @@
             @foreach($invoice->items as $item)
                 <tr>
                     <td>
-                        <strong>{{ $item->description }}</strong>
+                        @if($item->item)
+                            <strong>{{ $item->item->name }}</strong>
+                            @if($item->description && trim($item->description) !== trim($item->item->name))
+                                <br><span style="color: #4a5568; font-size: 11px;">{!! nl2br(e($item->description)) !!}</span>
+                            @endif
+                        @else
+                            <strong>{{ $item->description }}</strong>
+                        @endif
                         @if($item->item && $item->item->hsn_sac_code)
                             <br><span style="color: #718096; font-size: 11px;">HSN/SAC: {{ $item->item->hsn_sac_code }}</span>
                         @endif

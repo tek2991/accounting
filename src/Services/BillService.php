@@ -316,10 +316,10 @@ class BillService
             $bill->payments()->save($payment);
 
             // Update bill amounts
-            $newPaid = ($bill->getAttributes()['amount_paid'] ?? 0) + $paymentAmount;
+            $newPaid = $bill->amount_paid + $paymentAmount;
             $newBalance = $bill->grand_total - $newPaid;
 
-            $bill->amount_paid = $newPaid / 100;
+            $bill->amount_paid = $newPaid;
             $bill->balance_due = $newBalance;
 
             if ($newBalance <= 0) {
@@ -352,14 +352,13 @@ class BillService
             
             // Reverse transaction
             if ($bill->transaction_id) {
-                $this->txnService->deleteTransaction($bill->transaction);
+                $this->txnService->reverseTransaction($bill->transaction, "Reversal of Cancelled Bill {$bill->bill_number}");
             }
 
             foreach ($bill->payments as $payment) {
                 if ($payment->transaction_id) {
-                    $this->txnService->deleteTransaction($payment->transaction);
+                    $this->txnService->reverseTransaction($payment->transaction, "Reversal of Cancelled Payment {$payment->id}");
                 }
-                $payment->delete();
             }
 
             $bill->status = BillStatus::Cancelled;
