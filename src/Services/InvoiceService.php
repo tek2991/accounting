@@ -251,6 +251,10 @@ class InvoiceService
             $invoice->status = InvoiceStatus::Sent;
             $invoice->save();
             
+            if ($invoice->contact_id) {
+                $invoice->contact->increment('receivable_balance', $invoice->getRawOriginal('grand_total'));
+            }
+            
             activity('financial')
                 ->performedOn($invoice)
                 ->event('invoice.posted')
@@ -325,6 +329,10 @@ class InvoiceService
             
             $invoice->save();
             
+            if ($invoice->contact_id) {
+                $invoice->contact->decrement('receivable_balance', $paymentAmount);
+            }
+            
             activity('financial')
                 ->performedOn($invoice)
                 ->event('invoice.payment_recorded')
@@ -355,13 +363,27 @@ class InvoiceService
                     $this->txnService->reverseTransaction($payment->transaction, "Reversal of Cancelled Payment {$payment->id}");
                 }
                 // We should also ideally mark the payment as cancelled if it has a status column.
-                // Assuming no status on payment, we just leave it with reversed transaction.
             }
-
+            
+            $oldGrandTotal = $invoice->getRawOriginal('grand_total');
+            $oldAmountPaid = $invoice->getRawOriginal('amount_paid');
+            
             $invoice->status = InvoiceStatus::Cancelled;
             $invoice->amount_paid = 0;
             $invoice->balance_due = 0;
             $invoice->save();
+            
+            if ($invoice->contact_id && $invoice->transaction_id) {
+                // If it was posted, it added grand_total to receivable_balance.
+                // Any payments subtracted amount_paid from receivable_balance.
+                // To reverse, we subtract grand_total and add back amount_paid.
+                $netReversal = $oldGrandTotal - $oldAmountPaid;
+                if ($netReversal > 0) {
+                    $invoice->contact->decrement('receivable_balance', $netReversal);
+                } elseif ($netReversal < 0) {
+                    $invoice->contact->increment('receivable_balance', abs($netReversal));
+                }
+            }
             
             activity('financial')
                 ->performedOn($invoice)

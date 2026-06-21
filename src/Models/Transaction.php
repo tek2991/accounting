@@ -44,7 +44,6 @@ class Transaction extends Model
         'reviewed',
         'allow_reversal',
         'posted_at',
-        'posted_at',
         'created_by',
         'updated_by',
         'voucherable_type',
@@ -147,11 +146,11 @@ class Transaction extends Model
 
         $totalDebit = $entries
             ->where('type', \Tek2991\Accounting\Enums\JournalEntryType::Debit)
-            ->sum('amount');
+            ->sum(fn ($entry) => $entry->getRawOriginal('amount'));
 
         $totalCredit = $entries
             ->where('type', \Tek2991\Accounting\Enums\JournalEntryType::Credit)
-            ->sum('amount');
+            ->sum(fn ($entry) => $entry->getRawOriginal('amount'));
 
         return $totalDebit === $totalCredit;
     }

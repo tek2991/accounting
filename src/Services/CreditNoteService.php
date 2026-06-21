@@ -70,14 +70,14 @@ class CreditNoteService
         $isLinkedToInvoice = $cn->invoice_id !== null;
         if ($isLinkedToInvoice) {
             $cn->loadMissing('invoice.items');
-            $invoiceItems = $cn->invoice->items->keyBy('sort_order');
+            $invoiceItems = $cn->invoice->items->keyBy('item_id');
         }
 
         foreach ($cn->items as $item) {
             $qty = ($item->getAttributes()['quantity'] ?? 0);
             
-            if ($isLinkedToInvoice && isset($invoiceItems[$item->sort_order])) {
-                $origItem = $invoiceItems[$item->sort_order];
+            if ($isLinkedToInvoice && isset($invoiceItems[$item->item_id])) {
+                $origItem = $invoiceItems[$item->item_id];
                 $origQty = $origItem->getAttributes()['quantity'] ?? 1;
                 if ($origQty == 0) $origQty = 1;
                 
@@ -125,7 +125,23 @@ class CreditNoteService
                     $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
                     if ($tax) {
                         $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
-                        $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax, null, 'sales');
+                        
+                        $cn->loadMissing('contact');
+                        $companyProfile = \Tek2991\Accounting\Models\CompanyProfile::firstOrCreate(
+                            ['company_id' => $cn->company_id],
+                            ['tax_regime' => \Tek2991\Accounting\Enums\TaxRegimeType::Generic]
+                        );
+
+                        $taxContext = new \Tek2991\Accounting\ValueObjects\TaxCalculationContext(
+                            amount: $baseLineTotal,
+                            document: $cn,
+                            tax: $tax,
+                            modeOverride: $isInclusive ? 'inclusive' : 'exclusive',
+                            companyProfile: $companyProfile,
+                            contact: $cn->contact
+                        );
+
+                        $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($taxContext);
                         $itemTaxAmount = $taxComponents->sum('amount');
                         $item->tax_snapshot = $taxComponents->toArray();
                     }
@@ -196,7 +212,13 @@ class CreditNoteService
             $taxAccounts = [];
 
             foreach ($cn->items as $item) {
-                $incAccountId = $item->item->income_account_id ?? null;
+                $incAccountId = null;
+                if ($item->line_type === \Tek2991\Accounting\Enums\DocumentLineType::Item) {
+                    $incAccountId = $item->item?->income_account_id;
+                } elseif ($item->line_type === \Tek2991\Accounting\Enums\DocumentLineType::Account) {
+                    $incAccountId = $item->income_account_id;
+                }
+                
                 if (!$incAccountId) {
                     throw new Exception("Missing income account for item.");
                 }
@@ -285,6 +307,75 @@ class CreditNoteService
                 ->performedOn($cn)
                 ->event('credit_note.cancelled')
                 ->log("Credit Note {$cn->credit_note_number} cancelled");
+        });
+    }
+
+    public function applyToDocument(CreditNote $cn, \Tek2991\Accounting\Models\Invoice $invoice, int $amount): void
+    {
+        DB::transaction(function () use ($cn, $invoice, $amount) {
+            $cn = CreditNote::lockForUpdate()->find($cn->id);
+            $invoice = \Tek2991\Accounting\Models\Invoice::lockForUpdate()->find($invoice->id);
+            
+            if ($cn->status !== CreditNoteStatus::Issued && $cn->status !== CreditNoteStatus::PartiallyApplied) {
+                throw new Exception("Only issued or partially applied credit notes can be applied.");
+            }
+            if ($cn->contact_id !== $invoice->contact_id) {
+                throw new Exception("Credit note and invoice must belong to the same contact.");
+            }
+            if ($amount > ($cn->getRawOriginal('balance_remaining'))) {
+                throw new Exception("Cannot apply more than the remaining balance of the credit note.");
+            }
+            if ($amount > ($invoice->getRawOriginal('balance_due'))) {
+                throw new Exception("Cannot apply more than the remaining balance of the invoice.");
+            }
+
+            // DR: Receivable Account (reversing the CN) - wait, CN already credited Receivable. 
+            // To apply it against an invoice, we just update balances. 
+            // The ledger balances of Receivable are already reduced by the CN. 
+            // Applying it simply matches them visually in the subledger (amount_paid / balance_due).
+            // So we don't need Journal Entries! The CN already reduced AR.
+            // But wait, the Invoice balance_due is just a subledger cache.
+            
+            // Update CN
+            $newApplied = $cn->getRawOriginal('applied_amount') + $amount;
+            $cn->applied_amount = $newApplied;
+            $cn->balance_remaining = $cn->getRawOriginal('grand_total') - $newApplied;
+            if (($cn->getRawOriginal('grand_total') - $newApplied) <= 0) {
+                $cn->status = CreditNoteStatus::Applied;
+            } else {
+                $cn->status = CreditNoteStatus::PartiallyApplied;
+            }
+            $cn->save();
+
+            // Update Invoice
+            $newPaid = $invoice->getRawOriginal('amount_paid') + $amount;
+            $invoice->amount_paid = $newPaid;
+            $invoice->balance_due = $invoice->getRawOriginal('grand_total') - $newPaid;
+            if (($invoice->getRawOriginal('grand_total') - $newPaid) <= 0) {
+                $invoice->status = \Tek2991\Accounting\Enums\InvoiceStatus::Paid;
+            } else {
+                $invoice->status = \Tek2991\Accounting\Enums\InvoiceStatus::PartiallyPaid;
+            }
+            $invoice->save();
+
+            // Record application in DB (assuming a pivot table exists, but if not we just use Activity log for now)
+            activity('financial')
+                ->performedOn($cn)
+                ->event('credit_note.applied')
+                ->withProperties([
+                    'invoice_id' => $invoice->id,
+                    'amount' => $amount
+                ])
+                ->log("Applied " . number_format($amount / 100, 2) . " to Invoice {$invoice->invoice_number}");
+                
+            activity('financial')
+                ->performedOn($invoice)
+                ->event('invoice.credit_applied')
+                ->withProperties([
+                    'credit_note_id' => $cn->id,
+                    'amount' => $amount
+                ])
+                ->log("Credit Note {$cn->credit_note_number} applied for " . number_format($amount / 100, 2));
         });
     }
 }

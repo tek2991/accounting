@@ -12,12 +12,17 @@ use Tek2991\Accounting\Filament\Resources\Transactions\Schemas\TransactionForm;
 use Tek2991\Accounting\Filament\Resources\Transactions\TransactionResource;
 use Tek2991\Accounting\Models\BankAccount;
 use Tek2991\Accounting\Models\Transaction;
+use Tek2991\Accounting\Filament\Exports\TransactionExporter;
 
 class TransactionsTable
 {
     public static function configure(Table $table): Table
     {
         return $table
+            ->headerActions([
+                Actions\ExportAction::make()
+                    ->exporter(TransactionExporter::class)
+            ])
             ->modifyQueryUsing(fn ($query) => $query->with(['bankAccount.account', 'account', 'journalEntries.account']))
             ->columns([
                 Tables\Columns\TextColumn::make('posted_at')
@@ -193,6 +198,8 @@ class TransactionsTable
                 ]),
             ])
             ->groupedBulkActions([
+                Actions\ExportBulkAction::make()
+                    ->exporter(TransactionExporter::class),
                 Actions\BulkAction::make('delete')
                     ->label('Delete Selected')
                     ->icon('heroicon-o-trash')

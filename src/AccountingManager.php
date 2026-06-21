@@ -9,6 +9,17 @@ class AccountingManager
 {
     protected ?Setting $cachedSetting = null;
     protected ?int $cachedCompanyId = null;
+    protected array $closingChecks = [];
+
+    public function registerClosingCheck(string $checkClass): void
+    {
+        $this->closingChecks[] = $checkClass;
+    }
+
+    public function getClosingChecks(): array
+    {
+        return $this->closingChecks;
+    }
 
     public function getCurrency(): string
     {

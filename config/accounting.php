@@ -4,6 +4,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Panel Path
+    |--------------------------------------------------------------------------
+    |
+    | The URI path where the accounting panel will be accessible.
+    |
+    */
+
+    'panel_path' => env('ACCOUNTING_PANEL_PATH', 'accounting'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Company Model
     |--------------------------------------------------------------------------
     |
@@ -71,7 +82,7 @@ return [
     |
     */
 
-    'fiscal_year_start_month' => env('ACCOUNTING_FISCAL_YEAR_START', 1),
+    'fiscal_year_start' => env('ACCOUNTING_FISCAL_YEAR_START', 1),
 
     /*
     |--------------------------------------------------------------------------

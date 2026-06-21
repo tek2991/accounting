@@ -17,12 +17,12 @@ class DocumentNumberService
             }
 
             $prefix = $setting->invoice_prefix ?? 'INV-';
-            $number = $setting->invoice_next_number;
+            $nextNumber = $setting->invoice_next_number ?? 1;
             
-            $setting->invoice_next_number = $number + 1;
+            $setting->invoice_next_number = $nextNumber + 1;
             $setting->save();
             
-            return $prefix . str_pad((string)$number, 4, '0', STR_PAD_LEFT);
+            return $prefix . str_pad((string)$nextNumber, 4, '0', STR_PAD_LEFT);
         });
     }
 

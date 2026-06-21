@@ -130,12 +130,42 @@ class AccountService
     public function getTypeBalances(AccountType $type, string $startDate, string $endDate): array
     {
         $accounts = Account::ofType($type)->active()->get();
+        $accountIds = $accounts->pluck('id')->toArray();
         $results = [];
 
+        if (empty($accountIds)) {
+            return $results;
+        }
+
+        $movements = $this->getAccountBalances($startDate, $endDate, $accountIds)->keyBy('account_id');
+
+        $startingBalances = [];
+        if (!$type->isNominal()) {
+            $startingBalances = $this->getAccountBalances('1970-01-01', $startDate, $accountIds, true)->keyBy('account_id');
+        }
+
         foreach ($accounts as $account) {
+            $startingDebit = 0;
+            $startingCredit = 0;
+            if (isset($startingBalances[$account->id])) {
+                $startingDebit = $startingBalances[$account->id]->total_debit ?? 0;
+                $startingCredit = $startingBalances[$account->id]->total_credit ?? 0;
+            }
+            $startingAmount = $type->isNominal() ? 0 : $type->calculateNetMovement($startingDebit, $startingCredit);
+
+            $periodDebit = 0;
+            $periodCredit = 0;
+            if (isset($movements[$account->id])) {
+                $periodDebit = $movements[$account->id]->total_debit ?? 0;
+                $periodCredit = $movements[$account->id]->total_credit ?? 0;
+            }
+            $netMovementAmount = $type->calculateNetMovement($periodDebit, $periodCredit);
+
+            $endingBalanceAmount = $startingAmount + $netMovementAmount;
+
             $results[] = [
                 'account' => $account,
-                'balance' => $this->getEndingBalance($account, $startDate, $endDate),
+                'balance' => new Money($endingBalanceAmount, $account->currency_code),
             ];
         }
 

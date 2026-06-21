@@ -37,6 +37,7 @@ Publish the package migrations and migrate your database:
 ```bash
 php artisan vendor:publish --provider="Spatie\Activitylog\ActivitylogServiceProvider" --tag="activitylog-migrations"
 php artisan vendor:publish --tag="accounting-migrations"
+php artisan notifications:table
 php artisan migrate
 ```
 
@@ -51,6 +52,7 @@ public function panel(Panel $panel): Panel
 {
     return $panel
         ->plugin(AccountingPlugin::make())
+        ->databaseNotifications() // Required for export completion notifications
         // ...
 }
 ```

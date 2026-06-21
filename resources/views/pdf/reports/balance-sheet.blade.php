@@ -67,12 +67,17 @@
             @endforeach
             <tr>
                 <td style="padding-left: 30px;"></td>
-                <td>Retained Earnings / Net Income</td>
-                <td class="text-right">{{ $data['netIncome']->format() }}</td>
+                <td>Historical Retained Earnings</td>
+                <td class="text-right">{{ $data['historicalRetained']->format() }}</td>
+            </tr>
+            <tr>
+                <td style="padding-left: 30px;"></td>
+                <td>Current Year Profit/Loss</td>
+                <td class="text-right">{{ $data['currentYearProfit']->format() }}</td>
             </tr>
             <tr class="summary-row">
                 <td colspan="2" class="text-right">Total Equity</td>
-                <td class="text-right">{{ (new \Tek2991\Accounting\ValueObjects\Money($data['totalEquity']->getAmount() + $data['netIncome']->getAmount(), $data['totalEquity']->getCurrencyCode()))->format() }}</td>
+                <td class="text-right">{{ $data['totalEquity']->format() }}</td>
             </tr>
 
             <tr class="summary-row" style="border-top: 3px double #333;">

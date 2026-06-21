@@ -8,7 +8,7 @@ use Tek2991\Accounting\Enums\TransactionType;
 use Tek2991\Accounting\Models\Account;
 use Tek2991\Accounting\Models\JournalEntry;
 use Tek2991\Accounting\Models\Transaction;
-use Tek2991\Accounting\Services\FiscalPeriodService;
+use Tek2991\Accounting\Services\PeriodLockService;
 
 class TransactionService
 {
@@ -40,7 +40,7 @@ class TransactionService
     public function createTransaction(array $transactionData, array $entries): Transaction
     {
         if (isset($transactionData['posted_at']) && $transactionData['posted_at']) {
-            app(FiscalPeriodService::class)->assertNotLocked(
+            app(PeriodLockService::class)->assertNotClosed(
                 $transactionData['company_id'],
                 $transactionData['posted_at']
             );

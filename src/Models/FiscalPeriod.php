@@ -4,8 +4,9 @@ namespace Tek2991\Accounting\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Tek2991\Accounting\Concerns\CompanyOwned;
-use App\Models\User;
+use Tek2991\Accounting\Enums\FiscalPeriodStatus;
 
 class FiscalPeriod extends Model
 {
@@ -16,14 +17,17 @@ class FiscalPeriod extends Model
         'name',
         'start_date',
         'end_date',
-        'locked_at',
-        'locked_by',
+        'status',
+        'closing_profit_loss',
+        'closed_at',
+        'closed_by',
     ];
 
     protected $casts = [
         'start_date' => 'date',
         'end_date' => 'date',
-        'locked_at' => 'datetime',
+        'status' => FiscalPeriodStatus::class,
+        'closed_at' => 'datetime',
     ];
 
     public function getTable(): string
@@ -31,13 +35,23 @@ class FiscalPeriod extends Model
         return config('accounting.table_prefix', 'acc_') . 'fiscal_periods';
     }
 
-    public function lockedBy(): BelongsTo
+    public function closedBy(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'locked_by');
+        return $this->belongsTo(config('accounting.user_model'), 'closed_by');
+    }
+
+    public function events(): HasMany
+    {
+        return $this->hasMany(FiscalPeriodEvent::class);
     }
 
     public function getIsLockedAttribute(): bool
     {
-        return $this->locked_at !== null;
+        return $this->status !== FiscalPeriodStatus::Open;
+    }
+
+    public function isSoftClosed(): bool
+    {
+        return $this->status === FiscalPeriodStatus::SoftClosed;
     }
 }

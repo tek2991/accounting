@@ -70,14 +70,14 @@ class DebitNoteService
         $isLinkedToBill = $dn->bill_id !== null;
         if ($isLinkedToBill) {
             $dn->loadMissing('bill.items');
-            $billItems = $dn->bill->items->keyBy('sort_order');
+            $billItems = $dn->bill->items->keyBy('item_id');
         }
 
         foreach ($dn->items as $item) {
             $qty = ($item->getAttributes()['quantity'] ?? 0);
             
-            if ($isLinkedToBill && isset($billItems[$item->sort_order])) {
-                $origItem = $billItems[$item->sort_order];
+            if ($isLinkedToBill && isset($billItems[$item->item_id])) {
+                $origItem = $billItems[$item->item_id];
                 $origQty = $origItem->getAttributes()['quantity'] ?? 1;
                 if ($origQty == 0) $origQty = 1;
                 
@@ -125,7 +125,23 @@ class DebitNoteService
                     $tax = \Tek2991\Accounting\Models\Tax::with('components')->find($item->tax_id);
                     if ($tax) {
                         $isInclusive = $tax->type === \Tek2991\Accounting\Enums\TaxType::Inclusive;
-                        $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($baseLineTotal, $tax, null, 'purchase');
+                        
+                        $dn->loadMissing('contact');
+                        $companyProfile = \Tek2991\Accounting\Models\CompanyProfile::firstOrCreate(
+                            ['company_id' => $dn->company_id],
+                            ['tax_regime' => \Tek2991\Accounting\Enums\TaxRegimeType::Generic]
+                        );
+
+                        $taxContext = new \Tek2991\Accounting\ValueObjects\TaxCalculationContext(
+                            amount: $baseLineTotal,
+                            document: $dn,
+                            tax: $tax,
+                            modeOverride: $isInclusive ? 'inclusive' : 'exclusive',
+                            companyProfile: $companyProfile,
+                            contact: $dn->contact
+                        );
+
+                        $taxComponents = app(\Tek2991\Accounting\Services\TaxService::class)->calculateTax($taxContext);
                         $itemTaxAmount = $taxComponents->sum('amount');
                         $item->tax_snapshot = $taxComponents->toArray();
                     }
@@ -285,6 +301,68 @@ class DebitNoteService
                 ->performedOn($dn)
                 ->event('debit_note.cancelled')
                 ->log("Debit Note {$dn->debit_note_number} cancelled");
+        });
+    }
+
+    public function applyToDocument(DebitNote $dn, \Tek2991\Accounting\Models\Bill $bill, int $amount): void
+    {
+        DB::transaction(function () use ($dn, $bill, $amount) {
+            $dn = DebitNote::lockForUpdate()->find($dn->id);
+            $bill = \Tek2991\Accounting\Models\Bill::lockForUpdate()->find($bill->id);
+            
+            if ($dn->status !== \Tek2991\Accounting\Enums\DebitNoteStatus::Issued && $dn->status !== \Tek2991\Accounting\Enums\DebitNoteStatus::PartiallyApplied) {
+                throw new Exception("Only issued or partially applied debit notes can be applied.");
+            }
+            if ($dn->contact_id !== $bill->contact_id) {
+                throw new Exception("Debit note and bill must belong to the same contact.");
+            }
+            if ($amount > ($dn->getRawOriginal('balance_remaining'))) {
+                throw new Exception("Cannot apply more than the remaining balance of the debit note.");
+            }
+            if ($amount > ($bill->getRawOriginal('balance_due'))) {
+                throw new Exception("Cannot apply more than the remaining balance of the bill.");
+            }
+
+            // Update DN
+            $newApplied = $dn->getRawOriginal('applied_amount') + $amount;
+            $dn->applied_amount = $newApplied;
+            $dn->balance_remaining = $dn->getRawOriginal('grand_total') - $newApplied;
+            if (($dn->getRawOriginal('grand_total') - $newApplied) <= 0) {
+                $dn->status = \Tek2991\Accounting\Enums\DebitNoteStatus::Applied;
+            } else {
+                $dn->status = \Tek2991\Accounting\Enums\DebitNoteStatus::PartiallyApplied;
+            }
+            $dn->save();
+
+            // Update Bill
+            $newPaid = $bill->getRawOriginal('amount_paid') + $amount;
+            $bill->amount_paid = $newPaid;
+            $bill->balance_due = $bill->getRawOriginal('grand_total') - $newPaid;
+            if (($bill->getRawOriginal('grand_total') - $newPaid) <= 0) {
+                $bill->status = \Tek2991\Accounting\Enums\BillStatus::Paid;
+            } else {
+                $bill->status = \Tek2991\Accounting\Enums\BillStatus::PartiallyPaid;
+            }
+            $bill->save();
+
+            // Record application
+            activity('financial')
+                ->performedOn($dn)
+                ->event('debit_note.applied')
+                ->withProperties([
+                    'bill_id' => $bill->id,
+                    'amount' => $amount
+                ])
+                ->log("Applied " . number_format($amount / 100, 2) . " to Bill {$bill->bill_number}");
+                
+            activity('financial')
+                ->performedOn($bill)
+                ->event('bill.debit_applied')
+                ->withProperties([
+                    'debit_note_id' => $dn->id,
+                    'amount' => $amount
+                ])
+                ->log("Debit Note {$dn->debit_note_number} applied for " . number_format($amount / 100, 2));
         });
     }
 }

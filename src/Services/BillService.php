@@ -256,6 +256,10 @@ class BillService
             $bill->status = BillStatus::Received;
             $bill->save();
             
+            if ($bill->contact_id) {
+                $bill->contact->increment('payable_balance', $bill->getRawOriginal('grand_total'));
+            }
+            
             activity('financial')
                 ->performedOn($bill)
                 ->event('bill.posted')
@@ -330,6 +334,10 @@ class BillService
             
             $bill->save();
             
+            if ($bill->contact_id) {
+                $bill->contact->decrement('payable_balance', $paymentAmount);
+            }
+            
             activity('financial')
                 ->performedOn($bill)
                 ->event('bill.payment_made')
@@ -361,10 +369,22 @@ class BillService
                 }
             }
 
+            $oldGrandTotal = $bill->getRawOriginal('grand_total');
+            $oldAmountPaid = $bill->getRawOriginal('amount_paid');
+            
             $bill->status = BillStatus::Cancelled;
             $bill->amount_paid = 0;
             $bill->balance_due = 0;
             $bill->save();
+            
+            if ($bill->contact_id && $bill->transaction_id) {
+                $netReversal = $oldGrandTotal - $oldAmountPaid;
+                if ($netReversal > 0) {
+                    $bill->contact->decrement('payable_balance', $netReversal);
+                } elseif ($netReversal < 0) {
+                    $bill->contact->increment('payable_balance', abs($netReversal));
+                }
+            }
             
             activity('financial')
                 ->performedOn($bill)

@@ -80,6 +80,25 @@ class InvoicesTable
                         $disk = config('accounting.pdf.disk', 'public');
                         return response()->download(\Illuminate\Support\Facades\Storage::disk($disk)->path($path));
                     }),
+                Actions\Action::make('email')
+                    ->label('Email')
+                    ->icon('heroicon-o-envelope')
+                    ->requiresConfirmation()
+                    ->visible(fn (Invoice $record) => $record->status !== InvoiceStatus::Draft)
+                    ->action(function (Invoice $record) {
+                        $contactEmail = $record->contact->email ?? null;
+                        if (!$contactEmail) {
+                            \Filament\Notifications\Notification::make()->title('Contact has no email')->danger()->send();
+                            return;
+                        }
+                        
+                        $path = app(\Tek2991\Accounting\Services\InvoiceService::class)->generatePdf($record);
+                        
+                        \Illuminate\Support\Facades\Mail::to($contactEmail)
+                            ->send(new \Tek2991\Accounting\Mail\InvoiceMail($record, $path));
+                            
+                        \Filament\Notifications\Notification::make()->title('Invoice emailed successfully')->success()->send();
+                    }),
             ])
             ->groupedBulkActions([
                 Actions\BulkAction::make('delete')

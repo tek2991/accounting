@@ -13,11 +13,7 @@ class ManageFiscalPeriods extends ManageRecords
     protected function getHeaderActions(): array
     {
         return [
-            Actions\CreateAction::make()
-                ->mutateFormDataUsing(function (array $data): array {
-                    $data['company_id'] = auth()->user()->company_id ?? 1;
-                    return $data;
-                }),
+            Actions\CreateAction::make(),
         ];
     }
 }

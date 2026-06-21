@@ -90,15 +90,19 @@
             <div class="mb-4">
                 <div class="space-y-2">
                     <div class="flex justify-between items-center py-1 pl-6 pr-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded">
-                        <span class="text-gray-700 dark:text-gray-300">Net Income</span>
-                        <span class="text-gray-900 dark:text-white">{{ $data['netIncome']->format() }}</span>
+                        <span class="text-gray-700 dark:text-gray-300">Historical Retained Earnings (Closed Periods)</span>
+                        <span class="text-gray-900 dark:text-white">{{ $data['historicalRetained']->format() }}</span>
+                    </div>
+                    <div class="flex justify-between items-center py-1 pl-6 pr-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded">
+                        <span class="text-gray-700 dark:text-gray-300">Current Year Profit/Loss</span>
+                        <span class="text-gray-900 dark:text-white">{{ $data['currentYearProfit']->format() }}</span>
                     </div>
                 </div>
             </div>
 
             <div class="flex justify-between items-center py-3 mt-4 border-t-2 border-gray-200 dark:border-gray-800 font-semibold pl-2 pr-2">
                 <span class="text-gray-900 dark:text-white">Total Equity</span>
-                <span class="text-gray-900 dark:text-white">{{ (new \Tek2991\Accounting\ValueObjects\Money($data['totalEquity']->getAmount() + $data['netIncome']->getAmount(), $data['totalEquity']->getCurrencyCode()))->format() }}</span>
+                <span class="text-gray-900 dark:text-white">{{ $data['totalEquity']->format() }}</span>
             </div>
         </div>
 

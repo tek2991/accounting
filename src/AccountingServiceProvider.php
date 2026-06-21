@@ -12,7 +12,7 @@ use Tek2991\Accounting\Services\InvoiceService;
 use Tek2991\Accounting\Services\BillService;
 use Tek2991\Accounting\Services\CompanyContext;
 use Tek2991\Accounting\Services\TaxRegimeResolver;
-use Tek2991\Accounting\Services\FiscalPeriodService;
+use Tek2991\Accounting\Services\PeriodLockService;
 use Tek2991\Accounting\Services\CreditNoteService;
 use Tek2991\Accounting\Services\DebitNoteService;
 use Tek2991\Accounting\Services\DocumentNumberService;
@@ -46,6 +46,10 @@ class AccountingServiceProvider extends PackageServiceProvider
                 'create_debit_notes_table',
                 'create_debit_note_items_table',
             ])
+            ->hasCommands([
+                \Tek2991\Accounting\Commands\ImportOpeningBalancesCommand::class,
+                \Tek2991\Accounting\Commands\GenerateFiscalPeriodsCommand::class,
+            ])
             ->hasViews('accounting')
             ->hasRoute('web')
             ->hasTranslations();
@@ -62,46 +66,7 @@ class AccountingServiceProvider extends PackageServiceProvider
         });
 
         $this->app->singleton(CompanyAccessor::class, function ($app) {
-            return new class implements CompanyAccessor {
-                public function getCurrentCompanyId(): ?int
-                {
-                    $user = auth()->user();
-
-                    if ($user === null) {
-                        return null;
-                    }
-
-                    // Filament 4 tenant resolution
-                    if (class_exists(\Filament\Facades\Filament::class)) {
-                        $tenant = \Filament\Facades\Filament::getTenant();
-                        if ($tenant !== null) {
-                            return $tenant->getKey();
-                        }
-                    }
-
-                    // Fallback: check for current_company_id on user
-                    if (method_exists($user, 'currentCompany')) {
-                        return $user->currentCompany?->getKey();
-                    }
-
-                    return null;
-                }
-
-                public function getCurrentCompany(): ?\Illuminate\Database\Eloquent\Model
-                {
-                    if (class_exists(\Filament\Facades\Filament::class)) {
-                        return \Filament\Facades\Filament::getTenant();
-                    }
-
-                    $user = auth()->user();
-
-                    if ($user !== null && method_exists($user, 'currentCompany')) {
-                        return $user->currentCompany;
-                    }
-
-                    return null;
-                }
-            };
+            return new \Tek2991\Accounting\Support\DefaultCompanyAccessor();
         });
 
         $this->app->singleton(AccountService::class);
@@ -112,7 +77,7 @@ class AccountingServiceProvider extends PackageServiceProvider
         $this->app->singleton(DocumentNumberService::class);
         $this->app->singleton(InvoiceService::class);
         $this->app->singleton(BillService::class);
-        $this->app->singleton(FiscalPeriodService::class);
+        $this->app->singleton(PeriodLockService::class);
         $this->app->singleton(CreditNoteService::class);
         $this->app->singleton(DebitNoteService::class);
     }
